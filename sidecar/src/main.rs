@@ -8,6 +8,7 @@
 mod audio;
 mod calls;
 mod config;
+mod core;
 mod gemini;
 mod hermes;
 mod server;

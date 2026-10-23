@@ -18,6 +18,7 @@ use whatsapp_rust::wacore::types::call::IncomingCall;
 
 use crate::audio::{Downsampler, Playout};
 use crate::config::Config;
+use crate::core::{self, Core};
 use crate::gemini::{Live, LiveEvent, Setup};
 use crate::hermes::Hermes;
 
@@ -26,6 +27,18 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(60);
 const HERMES_TIMEOUT: Duration = Duration::from_secs(180);
 const STILL_CONNECTED: &str = "(The call is still connected: the owner spoke after your goodbye. \
     Answer them, and call end_call again once they are done.)";
+
+/// What a call is about, for the core session.
+struct CallInfo {
+    direction: &'static str,
+    reason: String,
+    details: String,
+    /// First prompt to the model, and the call context for the separate-agent prompt.
+    opening: String,
+    context: String,
+}
+
+type ToolDone = (String, String, Value);
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -417,8 +430,14 @@ impl Bridge {
         if !details.is_empty() {
             context.push_str(&format!("\nDetails: {details}"));
         }
-        self.converse(&id, handle, mic_tx, spk_rx, &opening, &context)
-            .await;
+        let info = CallInfo {
+            direction: "outbound",
+            reason,
+            details,
+            opening,
+            context,
+        };
+        self.converse(&id, handle, mic_tx, spk_rx, info).await;
     }
 
     pub async fn run_inbound(self: Arc<Self>, call: IncomingCall) {
@@ -450,21 +469,27 @@ impl Bridge {
             record.id,
             handle.call_id()
         );
-        let opening = "(The owner is calling you and is now connected. Greet them briefly and ask what they need.)";
-        self.converse(
-            &record.id,
-            handle,
-            mic_tx,
-            spk_rx,
-            opening,
-            "The owner called you.",
-        )
-        .await;
+        let info = CallInfo {
+            direction: "inbound",
+            reason: String::new(),
+            details: String::new(),
+            opening:
+                "(The owner is calling you and is now connected. Greet them briefly and ask what \
+                they need.)"
+                    .into(),
+            context: "The owner called you.".into(),
+        };
+        self.converse(&record.id, handle, mic_tx, spk_rx, info)
+            .await;
     }
 
     /// Asks Hermes for a short briefing so the voice model shares its name, persona and memory.
     /// Fetched ahead of time so answering a call never waits on it.
     pub async fn refresh_persona(&self) {
+        // In core-session mode the voice gets the session's own prompt instead.
+        if !self.cfg.context_url.is_empty() {
+            return;
+        }
         let Some(h) = &self.hermes else { return };
         let prompt = "A voice version of you is about to talk with the owner on a WhatsApp call, and it \
             knows only what you write here. In under 150 words of plain sentences, tell it: your name and \
@@ -519,11 +544,7 @@ impl Bridge {
             tools_note,
             context,
         );
-        let mut functions = vec![json!({
-            "name": "end_call",
-            "description": "Hang up the call. Call it only after you have said goodbye.",
-            "behavior": "NON_BLOCKING",
-        })];
+        let mut functions = vec![end_call_function()];
         if self.hermes.is_some() {
             functions.push(json!({
                 "name": "ask_hermes",
@@ -548,6 +569,65 @@ impl Bridge {
             functions,
             languages: self.cfg.languages.clone(),
             overrides: self.cfg.live_config.clone(),
+            history: vec![],
+            vocabulary: self.cfg.vocabulary.clone(),
+        }
+    }
+
+    /// Setup when the voice acts as the owner's DM session: that session's prompt, history and tools.
+    fn core_setup(&self, ctx: core::CallContext) -> Setup {
+        let mut functions = ctx.functions;
+        functions.push(end_call_function());
+        functions.extend(core::bridge_functions());
+        let mut vocabulary = self.cfg.vocabulary.clone();
+        vocabulary.extend(ctx.vocabulary);
+        vocabulary.sort();
+        vocabulary.dedup();
+        Setup {
+            model: self.cfg.model.clone(),
+            voice: self.cfg.voice.clone(),
+            system_instruction: ctx.system_instruction,
+            functions,
+            languages: self.cfg.languages.clone(),
+            overrides: self.cfg.live_config.clone(),
+            history: ctx.history,
+            vocabulary,
+        }
+    }
+
+    /// Opens the core session for a call; None (separate-agent mode) if it is off or unavailable.
+    async fn start_core(&self, id: &str, info: &CallInfo) -> Option<(Core, core::CallContext)> {
+        if self.cfg.context_url.is_empty() {
+            return None;
+        }
+        let core = Core::new(&self.cfg.context_url, &self.cfg.token, id);
+        let started = Instant::now();
+        match tokio::time::timeout(
+            Duration::from_secs(30),
+            core.start(info.direction, &info.reason, &info.details),
+        )
+        .await
+        {
+            Ok(Ok(ctx)) => {
+                log::info!(
+                    "call {id}: core session {} loaded in {:.2}s ({} history turns, {} tools)",
+                    ctx.session_id,
+                    started.elapsed().as_secs_f32(),
+                    ctx.history.len(),
+                    ctx.functions.len()
+                );
+                Some((core, ctx))
+            }
+            Ok(Err(e)) => {
+                log::warn!(
+                    "call {id}: core session unavailable ({e:#}); using the separate voice agent"
+                );
+                None
+            }
+            Err(_) => {
+                log::warn!("call {id}: core session timed out; using the separate voice agent");
+                None
+            }
         }
     }
 
@@ -556,7 +636,7 @@ impl Bridge {
         id: &str,
         call_id: &str,
         args: &Value,
-        done: mpsc::UnboundedSender<(String, Value)>,
+        done: mpsc::UnboundedSender<ToolDone>,
     ) -> JoinHandle<()> {
         let hermes = self.hermes.clone();
         let request = args["request"].as_str().unwrap_or_default().to_string();
@@ -577,7 +657,7 @@ impl Bridge {
                     }
                 }
             };
-            let _ = done.send((tool_id, result));
+            let _ = done.send((tool_id, "ask_hermes".to_string(), result));
         })
     }
 
@@ -587,14 +667,18 @@ impl Bridge {
         handle: CallHandle,
         mic_tx: async_channel::Sender<Vec<i16>>,
         spk_rx: async_channel::Receiver<Vec<i16>>,
-        opening: &str,
-        context: &str,
+        info: CallInfo,
     ) {
         self.calls.update(id, |r| {
             r.status = Status::InProgress;
             r.answered_at = Some(now());
         });
-        let mut live = match Live::connect(&self.cfg.gemini_api_key, self.setup(context)).await {
+        let connecting = Instant::now();
+        let (core, setup) = match self.start_core(id, &info).await {
+            Some((core, ctx)) => (Some(core), self.core_setup(ctx)),
+            None => (None, self.setup(&info.context)),
+        };
+        let mut live = match Live::connect(&self.cfg.gemini_api_key, setup).await {
             Ok(l) => l,
             Err(e) => {
                 log::error!("call {id}: voice model unavailable: {e:#}");
@@ -606,7 +690,31 @@ impl Bridge {
                 );
             }
         };
-        live.send_text(opening);
+        log::info!(
+            "call {id}: voice model ready {:.2}s after answer",
+            connecting.elapsed().as_secs_f32()
+        );
+        live.send_text(&info.opening);
+
+        // Core session: the call is written back to the owner's DM session as it happens, in order,
+        // and text messages that arrive meanwhile come back as context for the model.
+        let (events, mut news_rx, writer) = match &core {
+            Some(core) => {
+                let (tx, rx) = mpsc::unbounded_channel::<Value>();
+                let (news_tx, news_rx) = mpsc::unbounded_channel::<String>();
+                (
+                    Some(tx),
+                    news_rx,
+                    Some(tokio::spawn(write_back(core.clone(), rx, news_tx))),
+                )
+            }
+            None => (None, mpsc::unbounded_channel().1, None),
+        };
+        let emit = |event: Value| {
+            if let Some(tx) = &events {
+                let _ = tx.send(event);
+            }
+        };
 
         // Model speech goes out on a fixed 60 ms clock; the library does not pace for us.
         let playout = Arc::new(Playout::default());
@@ -625,7 +733,7 @@ impl Bridge {
         });
 
         let mut down = Downsampler::new();
-        let (tool_tx, mut tool_rx) = mpsc::unbounded_channel::<(String, Value)>();
+        let (tool_tx, mut tool_rx) = mpsc::unbounded_channel::<ToolDone>();
         let mut tool_tasks: HashMap<String, JoinHandle<()>> = HashMap::new();
         let mut ending = Ending::new(self.cfg.silence_timeout);
         let mut check = tokio::time::interval(Duration::from_millis(200));
@@ -648,10 +756,12 @@ impl Bridge {
                         break "call audio closed".to_string();
                     }
                 },
-                Some((tool_id, result)) = tool_rx.recv() => {
+                Some((tool_id, name, result)) = tool_rx.recv() => {
                     tool_tasks.remove(&tool_id);
-                    live.send_tool_response(&tool_id, "ask_hermes", result, "WHEN_IDLE");
+                    emit(json!({"type": "tool_result", "id": tool_id, "name": name, "result": result_text(&result)}));
+                    live.send_tool_response(&tool_id, &name, result, "WHEN_IDLE");
                 }
+                Some(news) = news_rx.recv() => live.add_context(&news),
                 _ = check.tick() => {
                     if let Some(why) = ending.check(Instant::now(), playout.buffered() > 0, !tool_tasks.is_empty()) {
                         break why.to_string();
@@ -669,11 +779,16 @@ impl Bridge {
                         if ending.owner_spoke(Instant::now()) {
                             live.send_text(STILL_CONNECTED);
                         }
+                        emit(json!({"type": "owner", "text": t}));
                         self.calls.update(id, |r| r.append("owner", &t));
                     }
-                    Some(LiveEvent::OutputTranscript(t)) => self.calls.update(id, |r| r.append("assistant", &t)),
+                    Some(LiveEvent::OutputTranscript(t)) => {
+                        emit(json!({"type": "assistant", "text": t}));
+                        self.calls.update(id, |r| r.append("assistant", &t));
+                    }
+                    Some(LiveEvent::TurnComplete) => emit(json!({"type": "turn_complete"})),
                     Some(LiveEvent::ToolCall { id: tool_id, name, args }) => match name.as_str() {
-                        "ask_hermes" => {
+                        "ask_hermes" if core.is_none() => {
                             log::info!("call {id}: ask_hermes {}", args["request"]);
                             let task = self.spawn_ask_hermes(&tool_id, id, &args, tool_tx.clone());
                             tool_tasks.insert(tool_id, task);
@@ -688,12 +803,27 @@ impl Bridge {
                                 ending.request();
                             }
                         }
-                        _ => live.send_tool_response(&tool_id, &name, json!({"error": "unknown function"}), "WHEN_IDLE"),
+                        _ => match &core {
+                            Some(core) => {
+                                log::info!("call {id}: tool {name} {}", truncate(&args.to_string(), 200));
+                                emit(json!({"type": "tool_call", "id": tool_id, "name": name, "args": args}));
+                                let (core, done, tid) = (core.clone(), tool_tx.clone(), tool_id.clone());
+                                let task = tokio::spawn(async move {
+                                    let started = Instant::now();
+                                    let result = core.call_tool(&tid, &name, &args).await;
+                                    log::info!("tool {name} answered in {:.2}s", started.elapsed().as_secs_f32());
+                                    let _ = done.send((tid, name, result));
+                                });
+                                tool_tasks.insert(tool_id, task);
+                            }
+                            None => live.send_tool_response(&tool_id, &name, json!({"error": "unknown function"}), "WHEN_IDLE"),
+                        },
                     },
                     Some(LiveEvent::ToolCancelled(ids)) => {
                         for tool_id in ids {
                             if let Some(task) = tool_tasks.remove(&tool_id) {
                                 task.abort();
+                                emit(json!({"type": "tool_result", "id": tool_id, "result": "(cancelled)"}));
                             }
                         }
                     }
@@ -711,9 +841,47 @@ impl Bridge {
         }
         log::info!("call {id}: {end_reason}");
         self.calls.finish(id, Status::Completed, end_reason);
+        if let (Some(core), Some(writer)) = (core, writer) {
+            drop(events);
+            // Writes go on after the summary; they wait for the session lock if Hermes is busy.
+            let call = id.to_string();
+            tokio::spawn(async move {
+                let _ = writer.await;
+                match core.end().await {
+                    Ok(n) => log::info!("call {call}: {n} messages saved to the chat session"),
+                    Err(e) => log::warn!(
+                        "call {call}: could not save the call to the chat session: {e:#}"
+                    ),
+                }
+            });
+            return self.send_core_summary(id).await;
+        }
         self.send_summary(id).await;
         // Memory may have changed during the call (e.g. a new preference); the next call should know.
         self.refresh_persona().await;
+    }
+
+    /// Core-session calls are already in the chat history; the owner just gets a short note.
+    async fn send_core_summary(&self, id: &str) {
+        let Some(record) = self.calls.get(id) else {
+            return;
+        };
+        if !self.cfg.send_summary || record.transcript.is_empty() {
+            return;
+        }
+        let minutes = record
+            .answered_at
+            .zip(record.ended_at)
+            .map(|(a, e)| e.saturating_sub(a).div_ceil(60))
+            .unwrap_or(0);
+        let text = format!("📞 Call ended ({minutes} min). It's saved in this chat.");
+        if let Err(e) = self
+            .client
+            .send_message(&self.owner_jid(), wa::Message::text(text))
+            .await
+        {
+            log::warn!("call {id}: could not send summary: {e}");
+        }
     }
 
     /// After a call: let Hermes digest the transcript, then message the owner a summary.
@@ -799,6 +967,43 @@ fn system_instruction(
          {owner_instructions}\n\n\
          {context}"
     )
+}
+
+fn end_call_function() -> Value {
+    json!({
+        "name": "end_call",
+        "description": "Hang up the call. Call it only after you have said goodbye.",
+        "behavior": "NON_BLOCKING",
+    })
+}
+
+/// A tool response as text for the chat history.
+fn result_text(result: &Value) -> String {
+    match result.get("result").and_then(Value::as_str) {
+        Some(text) => text.to_string(),
+        None => result.to_string(),
+    }
+}
+
+/// Posts call events to the core session in order, batching whatever piled up meanwhile.
+async fn write_back(
+    core: Core,
+    mut rx: mpsc::UnboundedReceiver<Value>,
+    news: mpsc::UnboundedSender<String>,
+) {
+    while let Some(first) = rx.recv().await {
+        let mut batch = vec![first];
+        while let Ok(more) = rx.try_recv() {
+            batch.push(more);
+        }
+        match core.events(batch).await {
+            Ok(text) if !text.is_empty() => {
+                let _ = news.send(text);
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("could not save call events: {e:#}"),
+        }
+    }
 }
 
 fn truncate(s: &str, max: usize) -> String {

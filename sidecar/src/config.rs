@@ -31,6 +31,18 @@ pub struct Config {
     pub silence_timeout: Duration,
     pub answer_inbound: bool,
     pub send_summary: bool,
+    /// Where the plugin's core-session service listens; empty means the separate-agent mode
+    /// (persona briefing + ask_hermes) instead of acting as the owner's DM session.
+    pub context_url: String,
+    /// Words transcription should spell as given (names).
+    pub vocabulary: Vec<String>,
+}
+
+fn list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 fn var(name: &str, default: &str) -> String {
@@ -109,11 +121,7 @@ impl Config {
             voice: var("HWV_VOICE", "Kore"),
             assistant_name: var("HWV_ASSISTANT_NAME", "Hermes"),
             voice_instructions: var("HWV_VOICE_INSTRUCTIONS", ""),
-            languages: var("HWV_LANGUAGES", "")
-                .split(',')
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .collect(),
+            languages: list(&var("HWV_LANGUAGES", "")),
             live_config: live_config(&var("HWV_LIVE_CONFIG", "{}"))?,
             hermes_api_url: var("HERMES_API_URL", "http://127.0.0.1:8642")
                 .trim_end_matches('/')
@@ -124,6 +132,8 @@ impl Config {
             silence_timeout: parse_duration(&var("HWV_SILENCE_TIMEOUT", "180s"))?,
             answer_inbound: var("HWV_ANSWER_INBOUND", "true") == "true",
             send_summary: var("HWV_SEND_SUMMARY", "true") == "true",
+            context_url: var("HWV_CONTEXT_URL", "").trim_end_matches('/').to_string(),
+            vocabulary: list(&var("HWV_VOCABULARY", "")),
         })
     }
 
