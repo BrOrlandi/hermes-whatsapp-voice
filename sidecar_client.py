@@ -213,3 +213,11 @@ class Client:
 
     def recent_calls(self, limit: int = 5) -> list[dict]:
         return self._request("GET", f"/calls?limit={limit}").get("calls", [])
+
+    def text_into_call(self, text: str) -> bool:
+        """Hand an owner's text to the active core-session call; False if no call takes it."""
+        try:
+            self._request("POST", "/calls/active/text", {"text": text})
+            return True
+        except SidecarError:
+            return False

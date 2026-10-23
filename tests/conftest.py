@@ -64,6 +64,7 @@ class FakeCtx:
         self.settings = settings
         self.tools = {}
         self.cli = {}
+        self.hooks = {}
 
     def get_config(self, key, default=None):
         # Mirrors Hermes's plugin-relative key rules (hermes_cli/plugins_state.py).
@@ -77,6 +78,9 @@ class FakeCtx:
     def register_cli_command(self, name, **kwargs):
         self.cli[name] = kwargs
 
+    def register_hook(self, name, callback):
+        self.hooks[name] = callback
+
     def register_skill(self, name, path):
         assert path.exists(), path
         self.skills = {**getattr(self, "skills", {}), name: path}
@@ -89,6 +93,7 @@ class FakeSidecar:
         self.statuses = list(statuses)
         self.token = token
         self.requests = []
+        self.active_call = False  # whether /calls/active/text takes texts
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -114,6 +119,8 @@ class FakeSidecar:
                     return
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append(("POST", self.path, body))
+                if self.path == "/calls/active/text":
+                    return self._send(200, {"delivered": True}) if fake.active_call else self._send(404, {})
                 self._send(202, {"id": "c1", "status": "dialing"})
 
             def do_GET(self):

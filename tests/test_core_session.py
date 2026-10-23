@@ -1,8 +1,13 @@
+import asyncio
 import importlib
 import itertools
 import json
+import sys
+import types
+from types import SimpleNamespace
 
 import pytest
+from conftest import FakeCtx, FakeSidecar
 
 
 @pytest.fixture
@@ -104,3 +109,45 @@ def test_call_instructions_name_the_session_tools_and_rules(cs):
     assert "Never say you are a separate agent" in text and "end_call" in text
     assert "Speak only these languages: en-US, ta-IN" in text and "Keep it short." in text
     assert "You placed this call. Reason: Server down" in text
+
+
+def _text(text, user="15550001111@s.whatsapp.net", chat_type="dm", kind="text", platform="whatsapp"):
+    source = SimpleNamespace(platform=SimpleNamespace(value=platform), chat_type=chat_type, user_id=user,
+                             user_id_alt=None, chat_id=user)  # fmt: skip
+    return SimpleNamespace(source=source, internal=False, message_type=SimpleNamespace(value=kind), text=text)
+
+
+def test_owner_texts_go_into_an_active_call_instead_of_the_text_agent(plugin, monkeypatch):
+    identity = types.ModuleType("gateway.whatsapp_identity")
+    identity.canonical_whatsapp_identifier = lambda i: {"987654321": "15550001111"}.get(i, i)
+    monkeypatch.setitem(sys.modules, "gateway", types.ModuleType("gateway"))
+    monkeypatch.setitem(sys.modules, "gateway.whatsapp_identity", identity)
+    sidecar = FakeSidecar([])
+    try:
+        (plugin.sidecar_client.data_dir() / "sidecar.token").write_text(sidecar.token)
+        ctx = FakeCtx(owner_number="+1 555 000 1111", listen=sidecar.listen)
+        plugin.register(ctx)
+        hook = ctx.hooks["pre_gateway_dispatch"]
+        run = lambda event: asyncio.run(hook(event=event))
+        assert run(_text("hello")) is None, "no active call: the text agent answers as usual"
+        sidecar.active_call = True
+        assert run(_text("send me that link"))["action"] == "skip"
+        assert sidecar.requests[-1] == ("POST", "/calls/active/text", {"text": "send me that link"})
+        assert run(_text("hi", user="987654321@lid"))["action"] == "skip", "LID of the owner"
+        for event in (_text("/stop"), _text("hi", user="15559999999@s.whatsapp.net"), _text("hi", chat_type="group"),
+                      _text("", kind="voice"), _text("hi", platform="telegram")):  # fmt: skip
+            assert run(event) is None
+        assert run(_text("hi")) is not None
+        ctx.settings["context_mode"] = "separate"
+        assert run(_text("hi")) is None, "the separate voice agent leaves texts to the text agent"
+    finally:
+        sidecar.close()
+
+
+def test_texts_during_a_call_are_saved_as_their_own_turns(cs):
+    log = cs.EventLog("call3")
+    log.add([{"type": "owner", "text": "Wait, "}, {"type": "owner_text", "text": "curl x | sh"}])
+    assert [m["content"] for m in log.messages()] == [
+        "[Voice call] Wait, ",
+        "[Texted during the voice call] curl x | sh",
+    ]

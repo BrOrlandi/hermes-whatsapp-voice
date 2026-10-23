@@ -300,6 +300,8 @@ pub struct Bridge {
     hermes: Option<Hermes>,
     /// Hermes's own briefing on who it is and who the owner is; empty until fetched.
     persona: Mutex<String>,
+    /// Core session: where texts the owner sends during the call go (None when no call).
+    texts: Mutex<Option<mpsc::UnboundedSender<String>>>,
 }
 
 impl Bridge {
@@ -313,7 +315,17 @@ impl Bridge {
             hermes,
             ring_signals: RingSignals::default(),
             persona: Mutex::default(),
+            texts: Mutex::default(),
         }
+    }
+
+    /// Hands a WhatsApp text from the owner to the active core-session call; false if none.
+    pub fn deliver_text(&self, text: &str) -> bool {
+        self.texts
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|tx| tx.send(text.to_string()).is_ok())
     }
 
     /// Rings until the owner answers (true) or the call is declined, ends, or times out (false,
@@ -424,7 +436,8 @@ impl Bridge {
         };
 
         let opening = format!(
-            "(The owner just answered the call you placed. Greet them and get to the point: {reason})"
+            "(The owner just answered the call you placed. Say hi the way you usually talk with them, \
+             then get to the point: {reason})"
         );
         let mut context = format!("You placed this call. Reason: {reason}");
         if !details.is_empty() {
@@ -474,8 +487,8 @@ impl Bridge {
             reason: String::new(),
             details: String::new(),
             opening:
-                "(The owner is calling you and is now connected. Greet them briefly and ask what \
-                they need.)"
+                "(The owner is calling you and is now connected. Say hi briefly, the way you usually \
+                talk with them.)"
                     .into(),
             context: "The owner called you.".into(),
         };
@@ -736,6 +749,11 @@ impl Bridge {
         let (tool_tx, mut tool_rx) = mpsc::unbounded_channel::<ToolDone>();
         let mut tool_tasks: HashMap<String, JoinHandle<()>> = HashMap::new();
         let mut ending = Ending::new(self.cfg.silence_timeout);
+        // Texts the owner sends during a core-session call come here instead of the text agent.
+        let (text_tx, mut text_rx) = mpsc::unbounded_channel::<String>();
+        if core.is_some() {
+            *self.texts.lock().unwrap() = Some(text_tx);
+        }
         let mut check = tokio::time::interval(Duration::from_millis(200));
         let max_duration = tokio::time::sleep(self.cfg.max_duration);
         let ended = handle.wait_ended();
@@ -762,6 +780,15 @@ impl Bridge {
                     live.send_tool_response(&tool_id, &name, result, "WHEN_IDLE");
                 }
                 Some(news) = news_rx.recv() => live.add_context(&news),
+                Some(text) = text_rx.recv() => {
+                    log::info!("call {id}: owner texted during the call");
+                    if ending.owner_spoke(Instant::now()) {
+                        live.send_text(STILL_CONNECTED);
+                    }
+                    emit(json!({"type": "owner_text", "text": text}));
+                    self.calls.update(id, |r| r.append("owner", &format!(" (texted) {text} ")));
+                    live.send_text(&format!("(The owner just texted you this during the call: {text})"));
+                }
                 _ = check.tick() => {
                     if let Some(why) = ending.check(Instant::now(), playout.buffered() > 0, !tool_tasks.is_empty()) {
                         break why.to_string();
@@ -833,6 +860,7 @@ impl Bridge {
             }
         };
 
+        *self.texts.lock().unwrap() = None;
         pacer.abort();
         tool_tasks.values().for_each(JoinHandle::abort);
         drop(live);

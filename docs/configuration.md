@@ -87,7 +87,10 @@ session with Hermes:
   approval, the voice asks you and answers with `approve_command`.
 - **Write-back:** what you and the voice say, and its tool calls, are saved into the session as the
   call goes (marked `display_kind: voice_call`), under Hermes's cross-process turn lock, so your next
-  text message continues with the call in context. Texts you send during a call reach the voice.
+  text message continues with the call in context.
+- **Texts during a call** go into the call: the voice answers them, and the text agent stays quiet
+  (a gateway hook; slash commands, media and other chats are unaffected). Needs a gateway restart
+  after installing or updating the plugin.
 
 It uses Hermes internals that are not part of the plugin API (listed in `CORE_PATCHES.md`); if the
 service is unavailable, a call falls back to the separate voice agent. It needs a WhatsApp DM

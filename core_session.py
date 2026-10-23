@@ -30,6 +30,7 @@ log = logging.getLogger("hermes_whatsapp_voice.core_session")
 APPROVE_TOOL = "approve_command"
 VOICE_KIND = "voice_call"
 USER_PREFIX = "[Voice call] "
+TEXT_PREFIX = "[Texted during the voice call] "
 TOOL_TIMEOUT = 600.0  # long tools (delegate_task, execute_code) run while the call goes on
 
 
@@ -43,7 +44,6 @@ def digits(number: str) -> str:
 def pick_owner_entry(entries: dict[str, dict], owner: str, canonical=digits) -> tuple[str, dict] | None:
     """The gateway routing entry of the owner's WhatsApp DM. Matched on the owner's number (as the
     session key or the origin's user id), never on a stored chat id: sessions and LIDs change."""
-    want = canonical(digits(owner))
     for key, entry in entries.items():
         origin = entry.get("origin") or {}
         if entry.get("platform", origin.get("platform")) != "whatsapp":
@@ -51,9 +51,15 @@ def pick_owner_entry(entries: dict[str, dict], owner: str, canonical=digits) -> 
         if entry.get("chat_type", origin.get("chat_type")) != "dm":
             continue
         ids = [key.rsplit(":", 1)[-1], origin.get("user_id") or "", origin.get("chat_id") or ""]
-        if any(i and canonical(digits(i.split("@")[0].split(":")[0])) == want for i in ids):
+        if is_owner(ids, owner, canonical):
             return key, entry
     return None
+
+
+def is_owner(ids: list[str], owner: str, canonical=digits) -> bool:
+    """Whether any WhatsApp id (JID, LID or number) is the owner's number."""
+    want = canonical(digits(owner))
+    return any(i and canonical(digits(i.split("@")[0].split(":")[0])) == want for i in ids)
 
 
 def _clip(text: str, limit: int) -> str:
@@ -134,14 +140,22 @@ def call_instructions(*, owner_name: str, reason: str, details: str, direction: 
             "conversation."
         ),
         (
-            "- This is a phone call: speak naturally and keep replies short. No lists, markdown, links or "
-            "emoji. Say names the way the owner says them."
+            "- This is a phone call: talk like a person on the phone, in your usual voice with them, and keep "
+            "replies short. No lists, markdown, links or emoji."
+        ),
+        (
+            '- Skip stock assistant phrases ("How can I help you today?", "I understand.", "I apologize '
+            'for the interruption", "Let me know if there is anything else"). Vary how you say things.'
+        ),
+        (
+            f"- Use {owner}'s name at most once, when you greet them; after that, don't say it. If you hear a "
+            "fragment or noise that makes no sense, don't act on it; ask briefly or let it go."
         ),
         "- You have all of your usual tools on this call, and use them as you would in the text chat.",
         (
-            '- Before any tool, say a few words first ("one moment, let me check"). Results arrive a little '
-            "later and you will be told when they do; keep talking with the owner meanwhile. Never make up "
-            "results or claim a tool ran when it did not."
+            "- Before a tool, say a few words first. Only say you will check something if you call a tool in "
+            "that same reply. Results arrive a little later and you will be told when they do; keep talking "
+            "with the owner meanwhile. Never make up results or claim a tool ran when it did not."
         ),
         (
             f"- If a tool result says a command needs approval, tell the owner briefly what it would do, ask "
@@ -200,7 +214,9 @@ class EventLog:
         for ev in self.events:
             kind = ev.get("type")
             text = ev.get("text") or ""
-            if kind == "owner" and text:
+            if kind == "owner_text" and text:
+                out.append(stamp({"role": "user", "content": TEXT_PREFIX + text}))
+            elif kind == "owner" and text:
                 last = out[-1] if out else None
                 if last and last["role"] == "user":
                     last["content"] += text
@@ -535,6 +551,33 @@ class HermesSession:
 def _result_text(result: Any) -> str:
     # Hermes already limits tool output, as in a text turn; nothing is cut here.
     return result if isinstance(result, str) else json.dumps(result, default=str)
+
+
+def text_into_call(ctx, event) -> dict | None:
+    """`pre_gateway_dispatch` hook (gateway process): while a core-session call is active, a plain
+    text from the owner goes into the call and the text agent does not answer it, so one assistant
+    handles the conversation. Anything else, or no active call, dispatches as usual."""
+    from .sidecar_client import Client, settings, token
+
+    source = getattr(event, "source", None)
+    if source is None or getattr(event, "internal", False):
+        return None
+    if getattr(getattr(event, "message_type", None), "value", "") != "text":
+        return None
+    if getattr(getattr(source, "platform", None), "value", "") != "whatsapp" or source.chat_type != "dm":
+        return None
+    text = (event.text or "").strip()
+    s = settings(ctx)
+    if not text or text.startswith("/") or s["context_mode"] != "core_session":
+        return None
+    from gateway.whatsapp_identity import canonical_whatsapp_identifier
+
+    ids = [source.user_id or "", getattr(source, "user_id_alt", None) or "", source.chat_id or ""]
+    if not is_owner(ids, str(s["owner_number"]), canonical_whatsapp_identifier):
+        return None
+    if not Client(str(s["listen"]), token(), timeout=2.0).text_into_call(text):
+        return None
+    return {"action": "skip", "reason": "delivered to the active WhatsApp voice call"}
 
 
 # --- HTTP service -------------------------------------------------------------------------------

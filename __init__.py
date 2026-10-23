@@ -34,6 +34,19 @@ def register(ctx):
         check_fn=available,
         emoji="📞",
     )
+
+    async def route_texts_into_call(event=None, **_kwargs):
+        # During a core-session call the owner's texts go to the call, not to a second assistant.
+        import asyncio
+
+        from .core_session import text_into_call
+
+        try:
+            return await asyncio.to_thread(text_into_call, ctx, event)
+        except Exception:  # noqa: BLE001 - a hook must never stop the gateway's dispatch
+            return None
+
+    ctx.register_hook("pre_gateway_dispatch", route_texts_into_call)
     # The setup runbook, loadable by the owner's agent as hermes-whatsapp-voice:setup.
     ctx.register_skill("setup", Path(__file__).parent / "skills" / "setup" / "SKILL.md")
     ctx.register_cli_command(

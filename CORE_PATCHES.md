@@ -14,7 +14,8 @@ to the separate voice agent (`context_mode: separate` behaviour) for that call.
 | What | Used for |
 |---|---|
 | `hermes_state.SessionDB`: `load_gateway_routing_entries`, `get_compression_tip`, `get_session`, `get_messages_as_conversation`, `acquire_session_turn_lease` / `release_session_turn_lease`, `append_messages_batch` | Find the owner's DM session, read its stored system prompt, tool pin and history; write the call back under the cross-process turn lease |
-| `gateway.whatsapp_identity.canonical_whatsapp_identifier` | Match the owner's number to the session key (LID/phone aliases) |
+| `gateway.whatsapp_identity.canonical_whatsapp_identifier` | Match the owner's number to the session key and to texts (LID/phone aliases) |
+| `pre_gateway_dispatch` hook (public plugin hook) returning `{"action": "skip"}` | During a call, the owner's texts go into the call instead of a second text reply |
 | `gateway.session_context.set_session_vars` / `clear_session_vars`, `tools.approval_context.set_current_session_key` | Bind the session for tool calls, as a gateway turn does |
 | `tools.approval.register_gateway_notify` / `resolve_gateway_approval` / `unregister_gateway_notify` | Ask the owner on the call to approve dangerous commands, with the gateway's approval rules |
 | `gateway.run`: `_resolve_runtime_agent_kwargs`, `_resolve_gateway_model`, `_load_gateway_config`, `_checkpoint_agent_kwargs`, `_current_max_iterations`, `GatewayRunner._load_fallback_model`, `GatewayRunner._load_reasoning_config`; `hermes_cli.tools_config._get_platform_tools` | Build an `AIAgent` the way the gateway does for a WhatsApp turn (same model, toolsets, fallback) |

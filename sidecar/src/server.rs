@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -80,6 +80,25 @@ async fn start_call(
 }
 
 #[derive(Deserialize)]
+struct CallText {
+    text: String,
+}
+
+/// A WhatsApp text from the owner, for the active call (the plugin's gateway hook sends it).
+async fn call_text(
+    State(bridge): State<Arc<Bridge>>,
+    headers: HeaderMap,
+    Json(body): Json<CallText>,
+) -> ApiResult {
+    authorize(&bridge, &headers)?;
+    let text = body.text.trim();
+    if text.is_empty() || !bridge.deliver_text(text) {
+        return Err(error(StatusCode::NOT_FOUND, "no active call takes texts"));
+    }
+    Ok(Json(json!({"delivered": true})).into_response())
+}
+
+#[derive(Deserialize)]
 struct ListQuery {
     limit: Option<usize>,
 }
@@ -111,6 +130,7 @@ pub async fn serve(bridge: Arc<Bridge>) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/calls", get(list_calls).post(start_call))
+        .route("/calls/active/text", post(call_text))
         .route("/calls/{id}", get(get_call))
         .with_state(bridge);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
