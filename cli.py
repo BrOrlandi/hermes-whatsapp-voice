@@ -96,6 +96,7 @@ def _serve(ctx) -> None:
     from .core_session import Service
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    os.environ.setdefault("HERMES_EXEC_ASK", "1")  # approvals ask a human, as in the gateway
     Service(
         owner=str(s["owner_number"]),
         token=env["HWV_TOKEN"],
