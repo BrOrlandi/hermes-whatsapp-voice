@@ -13,12 +13,16 @@ Restart the sidecar after a change: the dashboard's **Restart sidecar** button, 
 
 | key | default | |
 |---|---|---|
+| `context_mode` | `core_session` | `core_session`: the voice is the model of your WhatsApp chat with Hermes (see below). `separate`: a separate voice agent that asks Hermes through `ask_hermes` |
 | `owner_number` | (required) | Your number, international format |
 | `voice_model` | `gemini-3.8-live` | Gemini Live model |
 | `voice` | `Kore` | Gemini prebuilt voice |
 | `assistant_name` | `Hermes` | Fallback name when Hermes gives no persona briefing |
 | `languages` | (empty) | Language codes the voice may speak and listen for, e.g. `en-US, ta-IN`; empty allows any |
 | `voice_instructions` | (empty) | Your own extra rules for the voice: language, tone, call length |
+| `vocabulary` | (empty) | Words transcripts should spell as given, e.g. names; your own name is added automatically |
+| `voice_tools` | memory, skills, web, terminal, files, Hindsight… | `core_session`: Hermes tools the voice calls directly (only those your chat has) |
+| `history_chars` | `30000` | `core_session`: recent chat history given to the voice at call start |
 | `live_config` | `{}` | Advanced: any Gemini Live setup field, merged over the defaults (see below) |
 | `ring_timeout_seconds` | `45` | How long an outbound call rings |
 | `max_call_minutes` | `15` | Hard cap per call |
@@ -26,6 +30,7 @@ Restart the sidecar after a change: the dashboard's **Restart sidecar** button, 
 | `answer_inbound` | `true` | Answer calls from `owner_number` |
 | `send_summary` | `true` | Message a summary after each call |
 | `listen` | `127.0.0.1:8796` | Sidecar API address (loopback) |
+| `context_listen` | `127.0.0.1:8797` | `core_session` service address (loopback) |
 | `hermes_api_url` | `http://127.0.0.1:8642` | Hermes API server |
 
 **Every Gemini Live option.** `live_config` takes any field of the Live API's setup message and
@@ -69,6 +74,26 @@ you. The voice then sounds like your Hermes, and changes to Hermes's memory carr
 hermes config set plugins.entries.hermes-whatsapp-voice.settings.voice_instructions \
   "Keep calls very short and direct. Never ask if there is anything else."
 ```
+
+## Core-session mode
+
+With `context_mode: core_session` (the default), `hermes whatsapp-voice serve` also runs a small
+loopback service in Hermes's own interpreter, and each call becomes part of your WhatsApp DM
+session with Hermes:
+
+- **Context:** the voice gets that session's stored system prompt (persona, memory, skills), its
+  session context, and recent history (`history_chars`), loaded before the call starts.
+- **Tools:** the `voice_tools` the session has run through Hermes in that session, with the same
+  approval rules; when a command needs approval, the voice asks you and answers with
+  `approve_command`. `ask_hermes_deep` runs a full normal turn (your main model, all tools) in the
+  same session for heavier work.
+- **Write-back:** what you and the voice say, and its tool calls, are saved into the session as the
+  call goes (marked `display_kind: voice_call`), under Hermes's cross-process turn lock, so your next
+  text message continues with the call in context. Texts you send during a call reach the voice.
+
+It uses Hermes internals that are not part of the plugin API (listed in `CORE_PATCHES.md`); if the
+service is unavailable, a call falls back to the separate voice agent. It needs a WhatsApp DM
+session with the bot to exist (send it one text first).
 
 ## Credentials
 
