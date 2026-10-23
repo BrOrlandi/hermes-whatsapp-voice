@@ -7,7 +7,6 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-pub const DEEP_TOOL: &str = "ask_hermes_deep";
 pub const APPROVE_TOOL: &str = "approve_command";
 
 /// Context for one call, as `/voice/start` returns it.
@@ -31,7 +30,7 @@ pub struct Core {
 impl Core {
     pub fn new(base: &str, token: &str, call: &str) -> Self {
         Self {
-            // Tool and deep-turn waits are bounded on the service side (2 and 10 minutes).
+            // Tool waits are bounded on the service side (10 minutes).
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(660))
                 .build()
@@ -93,13 +92,6 @@ impl Core {
     /// Runs one function call and returns the response for the model.
     pub async fn call_tool(&self, tool_id: &str, name: &str, args: &Value) -> Value {
         let result = match name {
-            DEEP_TOOL => {
-                self.post(
-                    "/voice/deep",
-                    json!({"request": args["request"].as_str().unwrap_or_default()}),
-                )
-                .await
-            }
             APPROVE_TOOL => {
                 self.post(
                     "/voice/approve",
@@ -133,33 +125,19 @@ impl Core {
     }
 }
 
-/// The two functions the bridge adds to the session's own tools.
-pub fn bridge_functions() -> Vec<Value> {
-    vec![
-        json!({
-            "name": DEEP_TOOL,
-            "description": "Run a full turn of your normal text self (your main model, with all of \
-                your tools) in this same conversation. Use it for multi-step or heavy work, or anything \
-                your tools on this call cannot do. Pass a complete, self-contained request.",
-            "parameters": {
-                "type": "object",
-                "properties": {"request": {"type": "string", "description": "What to do, in full."}},
-                "required": ["request"],
-            },
-            "behavior": "NON_BLOCKING",
-        }),
-        json!({
-            "name": APPROVE_TOOL,
-            "description": "Answer a command that is waiting for the owner's approval, with the \
-                owner's decision: once, session (allow for this session), always, or deny.",
-            "parameters": {
-                "type": "object",
-                "properties": {"choice": {
-                    "type": "string", "enum": ["once", "session", "always", "deny"],
-                }},
-                "required": ["choice"],
-            },
-            "behavior": "NON_BLOCKING",
-        }),
-    ]
+/// The one function the bridge adds to the session's own tools.
+pub fn approve_function() -> Value {
+    json!({
+        "name": APPROVE_TOOL,
+        "description": "Answer a command that is waiting for the owner's approval, with the \
+            owner's decision: once, session (allow for this session), always, or deny.",
+        "parameters": {
+            "type": "object",
+            "properties": {"choice": {
+                "type": "string", "enum": ["once", "session", "always", "deny"],
+            }},
+            "required": ["choice"],
+        },
+        "behavior": "NON_BLOCKING",
+    })
 }

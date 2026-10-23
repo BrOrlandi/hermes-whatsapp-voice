@@ -76,7 +76,7 @@ def function_declaration(tool: dict, behavior: str | None = "NON_BLOCKING") -> d
     fn = tool.get("function", tool)
     params = fn.get("parameters") or {}
     defs = {**params.get("definitions", {}), **params.get("$defs", {})}
-    decl = {"name": fn["name"], "description": (fn.get("description") or "")[:1024]}
+    decl = {"name": fn["name"], "description": fn.get("description") or ""}
     if params.get("properties"):
         decl["parameters"] = _schema(params, defs)
     if behavior:

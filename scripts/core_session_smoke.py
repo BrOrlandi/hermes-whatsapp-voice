@@ -6,7 +6,9 @@ session, writes the exchange back, and checks the rows landed in the session. Se
 messages and places no calls, but it does add a short test exchange to the owner's chat history.
 
 Run with Hermes's interpreter, from the plugin directory's parent:
-    hermes --run-module cProfile -o /dev/null scripts/core_session_smoke.py <plugin dir>
+    hermes --run-module cProfile -o /dev/null scripts/core_session_smoke.py <plugin dir> [--no-write]
+
+--no-write checks the same path but leaves the chat history untouched.
 """
 
 from __future__ import annotations
@@ -93,7 +95,8 @@ async def ask(ws, session, question: str, stats: dict) -> str:
             pending.add(fc["id"])
             asyncio.create_task(run_tool(fc))
         if sc_.get("turnComplete"):
-            session.events([{"type": "turn_complete"}])
+            if WRITE:
+                session.events([{"type": "turn_complete"}])
             if not pending and tools_done.empty() and answer.strip() and heard_since_tool:
                 break
     if first:
@@ -105,7 +108,7 @@ async def main(plugin_dir: Path) -> int:
     cs, sc = load_plugin(plugin_dir)
     s = sc.settings(Ctx())
     service = cs.Service(
-        owner=str(s["owner_number"]), token="smoke", voice_tools=str(s["voice_tools"]),
+        owner=str(s["owner_number"]), token="smoke",
         history_chars=int(s["history_chars"]), voice_instructions=str(s["voice_instructions"]),
         languages=[c.strip() for c in str(s["languages"]).split(",") if c.strip()],
         vocabulary=[w.strip() for w in str(s["vocabulary"]).split(",") if w.strip()],
@@ -144,6 +147,10 @@ async def main(plugin_dir: Path) -> int:
         for q in QUESTIONS:
             print(f"Q: {q}")
             print(f"A: {await ask(ws, session, q, stats)}")
+    if not WRITE:
+        print("stats", json.dumps(stats))
+        service.pool.shutdown(wait=False, cancel_futures=True)
+        return 0
     written = session.end()
     rows = [m for m in session.db.get_messages_as_conversation(session.session_id)
             if (m.get("display_metadata") or {}).get("call_id") == call_id]  # fmt: skip
@@ -152,6 +159,8 @@ async def main(plugin_dir: Path) -> int:
     service.pool.shutdown(wait=False, cancel_futures=True)
     return 0 if rows and written == len(rows) else 1
 
+
+WRITE = "--no-write" not in sys.argv
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)

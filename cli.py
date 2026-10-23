@@ -100,7 +100,6 @@ def _serve(ctx) -> None:
     Service(
         owner=str(s["owner_number"]),
         token=env["HWV_TOKEN"],
-        voice_tools=str(s["voice_tools"]),
         history_chars=int(s["history_chars"]),
         voice_instructions=str(s["voice_instructions"]),
         languages=[c.strip() for c in str(s["languages"]).split(",") if c.strip()],

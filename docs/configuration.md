@@ -21,7 +21,6 @@ Restart the sidecar after a change: the dashboard's **Restart sidecar** button, 
 | `languages` | (empty) | Language codes the voice may speak and listen for, e.g. `en-US, ta-IN`; empty allows any |
 | `voice_instructions` | (empty) | Your own extra rules for the voice: language, tone, call length |
 | `vocabulary` | (empty) | Words transcripts should spell as given, e.g. names; your own name is added automatically |
-| `voice_tools` | memory, skills, web, terminal, files, Hindsight… | `core_session`: Hermes tools the voice calls directly (only those your chat has) |
 | `history_chars` | `30000` | `core_session`: recent chat history given to the voice at call start |
 | `live_config` | `{}` | Advanced: any Gemini Live setup field, merged over the defaults (see below) |
 | `ring_timeout_seconds` | `45` | How long an outbound call rings |
@@ -83,10 +82,9 @@ session with Hermes:
 
 - **Context:** the voice gets that session's stored system prompt (persona, memory, skills), its
   session context, and recent history (`history_chars`), loaded before the call starts.
-- **Tools:** the `voice_tools` the session has run through Hermes in that session, with the same
-  approval rules; when a command needs approval, the voice asks you and answers with
-  `approve_command`. `ask_hermes_deep` runs a full normal turn (your main model, all tools) in the
-  same session for heavier work.
+- **Tools:** all of the session's own tools, run through Hermes in that session exactly as in a
+  text turn (hooks, memory, memory providers, the same approval rules). When a command needs
+  approval, the voice asks you and answers with `approve_command`.
 - **Write-back:** what you and the voice say, and its tool calls, are saved into the session as the
   call goes (marked `display_kind: voice_call`), under Hermes's cross-process turn lock, so your next
   text message continues with the call in context. Texts you send during a call reach the voice.

@@ -578,7 +578,7 @@ impl Bridge {
     fn core_setup(&self, ctx: core::CallContext) -> Setup {
         let mut functions = ctx.functions;
         functions.push(end_call_function());
-        functions.extend(core::bridge_functions());
+        functions.push(core::approve_function());
         let mut vocabulary = self.cfg.vocabulary.clone();
         vocabulary.extend(ctx.vocabulary);
         vocabulary.sort();
