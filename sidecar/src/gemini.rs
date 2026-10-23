@@ -651,10 +651,11 @@ mod tests {
         live.send_text("What is my favourite colour?");
         let (mut audio, mut transcript) = (0usize, String::new());
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        while audio < 24_000 || transcript.is_empty() {
+        loop {
             match tokio::time::timeout_at(deadline, live.events.recv()).await {
                 Ok(Some(LiveEvent::Audio(pcm))) => audio += pcm.len(),
                 Ok(Some(LiveEvent::OutputTranscript(t))) => transcript.push_str(&t),
+                Ok(Some(LiveEvent::TurnComplete)) if !transcript.is_empty() => break,
                 Ok(Some(LiveEvent::Closed(why))) => panic!("closed: {why}"),
                 Ok(Some(_)) => {}
                 Ok(None) | Err(_) => break,
