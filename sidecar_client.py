@@ -22,14 +22,21 @@ PLUGIN_DIR = Path(__file__).resolve().parent
 
 # Settings forwarded to the sidecar, with the defaults from plugin.yaml.
 SETTINGS: dict[str, Any] = {
+    "context_mode": "core_session",
     "owner_number": "",
     "voice_model": "gemini-3.8-live",
     "voice": "Kore",
     "assistant_name": "Hermes",
     "languages": "",
     "voice_instructions": "",
+    "voice_tools": "memory, session_search, skills_list, skill_view, web_search, web_extract, terminal, "
+    "read_file, search_files, cronjob, send_message, todo_list, hindsight_recall, hindsight_retain, "
+    "hindsight_reflect",
+    "history_chars": 30000,
+    "vocabulary": "",
     "live_config": {},
     "listen": "127.0.0.1:8796",
+    "context_listen": "127.0.0.1:8797",
     "hermes_api_url": "http://127.0.0.1:8642",
     "ring_timeout_seconds": 45,
     "max_call_minutes": 15,
@@ -157,6 +164,8 @@ def sidecar_env(ctx) -> dict[str, str]:
         "HWV_SILENCE_TIMEOUT": f"{int(s['silence_hangup_seconds'])}s",
         "HWV_ANSWER_INBOUND": "true" if s["answer_inbound"] else "false",
         "HWV_SEND_SUMMARY": "true" if s["send_summary"] else "false",
+        "HWV_VOCABULARY": str(s["vocabulary"]),
+        "HWV_CONTEXT_URL": f"http://{s['context_listen']}" if s["context_mode"] == "core_session" else "",
         "HWV_DATA_DIR": str(data_dir()),
         "HWV_TOKEN": token(create=True),
         "HERMES_API_URL": str(s["hermes_api_url"]),

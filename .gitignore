@@ -17,3 +17,4 @@ sidecar/target/
 
 # Draft of the Hermes catalog submission (lives in NousResearch/hermes-agent, not here)
 catalog-pr/
+VOICE_3B_*.md

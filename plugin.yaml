@@ -27,6 +27,11 @@ optional_env:
     description: "Hermes API server key; lets the voice agent hand real work to Hermes during a call"
     secret: true
 config_schema:
+  context_mode:
+    type: str
+    default: "core_session"
+    label: "Call context"
+    description: "core_session: the voice is the model of your WhatsApp chat with Hermes (same prompt, history and tools; the call is saved into that chat). separate: a separate voice agent that asks Hermes for help."
   owner_number:
     type: str
     default: ""
@@ -83,6 +88,21 @@ config_schema:
     default: true
     label: "Send call summary"
     description: "Message a short WhatsApp summary after each call."
+  voice_tools:
+    type: str
+    default: "memory, session_search, skills_list, skill_view, web_search, web_extract, terminal, read_file, search_files, cronjob, send_message, todo_list, hindsight_recall, hindsight_retain, hindsight_reflect"
+    label: "Voice tools"
+    description: "core_session: comma-separated Hermes tools the voice can call directly (those your chat has). Anything else goes through a full Hermes turn."
+  history_chars:
+    type: int
+    default: 30000
+    label: "Chat history for calls (characters)"
+    description: "core_session: how much recent chat history the voice gets at the start of a call."
+  vocabulary:
+    type: str
+    default: ""
+    label: "Spellings"
+    description: "Comma-separated words transcripts should spell as given, e.g. names. Your own name is added automatically."
   live_config:
     type: dict
     default: {}
@@ -93,6 +113,11 @@ config_schema:
     default: "127.0.0.1:8796"
     label: "Sidecar address"
     description: "Loopback address of the sidecar's local API."
+  context_listen:
+    type: str
+    default: "127.0.0.1:8797"
+    label: "Core session address"
+    description: "core_session: loopback address of the plugin's context service."
   hermes_api_url:
     type: str
     default: "http://127.0.0.1:8642"

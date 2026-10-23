@@ -85,7 +85,30 @@ def _pair(ctx, phone: str | None) -> None:
 def _serve(ctx) -> None:
     exe = _require_ready(ctx)
     env = {**os.environ, **sidecar_env(ctx)}
-    os.execve(str(exe), [str(exe), "serve"], env)
+    s = settings(ctx)
+    if s["context_mode"] != "core_session":
+        os.execve(str(exe), [str(exe), "serve"], env)
+    # Core session: this process (Hermes's interpreter) serves the voice the owner's DM session,
+    # and runs the sidecar as a child.
+    import logging
+    import signal
+
+    from .core_session import Service
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    Service(
+        owner=str(s["owner_number"]),
+        token=env["HWV_TOKEN"],
+        voice_tools=str(s["voice_tools"]),
+        history_chars=int(s["history_chars"]),
+        voice_instructions=str(s["voice_instructions"]),
+        languages=[c.strip() for c in str(s["languages"]).split(",") if c.strip()],
+        vocabulary=[w.strip() for w in str(s["vocabulary"]).split(",") if w.strip()],
+    ).serve(str(s["context_listen"]))
+    child = subprocess.Popen([str(exe), "serve"], env=env)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda signum, _frame: child.send_signal(signum))
+    raise SystemExit(child.wait())
 
 
 def _service() -> None:
