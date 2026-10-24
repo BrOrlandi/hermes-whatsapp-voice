@@ -42,7 +42,22 @@ config_schema:
     type: str
     default: "Kore"
     label: "Voice"
-    description: "Gemini prebuilt voice, e.g. Kore, Puck, Charon."
+    description: "Gemini prebuilt voice, e.g. Kore, Puck, Charon. Ignored when voice_provider is grok."
+  voice_provider:
+    type: str
+    default: "grok"
+    label: "Voice provider"
+    description: "grok uses the SuperGrok login. gemini is the fallback and the previous path. No API key."
+  grok_model:
+    type: str
+    default: "grok-voice-latest"
+    label: "Grok voice model"
+    description: "Grok realtime model. The socket URL carries this. Not a metered API key."
+  grok_voice:
+    type: str
+    default: "ara"
+    label: "Grok voice"
+    description: "Grok voice name, e.g. ara, eve, rex. Not a Gemini voice."
   assistant_name:
     type: str
     default: "Hermes"

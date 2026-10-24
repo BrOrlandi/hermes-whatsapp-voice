@@ -41,6 +41,7 @@ async fn health(State(bridge): State<Arc<Bridge>>, headers: HeaderMap) -> ApiRes
         "logged_in": bridge.client.is_logged_in(),
         "active_call": bridge.calls.active(),
         "hermes_connected": !bridge.cfg.hermes_api_key.is_empty(),
+        "voice_provider": bridge.cfg.voice_provider,
     }))
     .into_response())
 }

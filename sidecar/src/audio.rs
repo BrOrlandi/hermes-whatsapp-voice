@@ -88,6 +88,40 @@ impl Downsampler {
     }
 }
 
+/// Streaming 16 kHz -> 24 kHz converter. Grok realtime PCM is 24 kHz; call audio is 16 kHz.
+pub struct Upsampler {
+    buf: Vec<f32>,
+    pos: f64,
+}
+
+impl Upsampler {
+    pub fn new() -> Self {
+        Self {
+            buf: vec![0.0],
+            pos: 0.0,
+        }
+    }
+
+    pub fn process(&mut self, input: &[i16]) -> Vec<i16> {
+        self.buf.extend(input.iter().map(|&s| s as f32));
+        let step = 2.0 / 3.0;
+        let mut out = Vec::with_capacity(input.len() * 3 / 2 + 1);
+        while self.pos + 1.0 < self.buf.len() as f64 {
+            let i = self.pos as usize;
+            let frac = (self.pos - i as f64) as f32;
+            let sample = self.buf[i] * (1.0 - frac) + self.buf[i + 1] * frac;
+            out.push(sample.round().clamp(i16::MIN as f32, i16::MAX as f32) as i16);
+            self.pos += step;
+        }
+        let drop = (self.pos as usize).saturating_sub(1);
+        if drop > 0 {
+            self.buf.drain(..drop);
+            self.pos -= drop as f64;
+        }
+        out
+    }
+}
+
 /// Model speech waiting to be played into the call, drained one 60 ms frame per tick.
 #[derive(Default)]
 pub struct Playout {
@@ -155,6 +189,16 @@ mod tests {
         let stop = Downsampler::new().process(&sine(11000.0, 24000.0, 24000));
         let r = rms(&stop[1000..]);
         assert!(r < 400.0, "11 kHz leaked with rms {r}");
+    }
+
+    #[test]
+    fn upsampler_ratio_is_three_halves() {
+        let mut up = Upsampler::new();
+        let input = sine(440.0, 16000.0, 16000);
+        let out: Vec<i16> = input.chunks(640).flat_map(|c| up.process(c)).collect();
+        assert!((23900..=24010).contains(&out.len()), "got {}", out.len());
+        let r = rms(&out[1000..]);
+        assert!((10000.0..13000.0).contains(&r), "440 Hz rms {r}");
     }
 
     #[test]

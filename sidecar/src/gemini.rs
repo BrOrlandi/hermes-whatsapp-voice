@@ -109,6 +109,8 @@ pub enum LiveEvent {
     ToolCancelled(Vec<String>),
     /// The session ended for good; carries the reason.
     Closed(String),
+    /// Grok hit repeated provider errors. The call should continue on Gemini.
+    Fallback(String),
 }
 
 /// What one server message means: events to surface, plus connection bookkeeping.

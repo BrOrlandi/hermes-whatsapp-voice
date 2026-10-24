@@ -18,7 +18,8 @@ use whatsapp_rust::wacore::types::call::IncomingCall;
 
 use crate::audio::{Downsampler, Playout};
 use crate::config::Config;
-use crate::gemini::{Live, LiveEvent, Setup};
+use crate::gemini::{Live as GeminiLive, LiveEvent, Setup};
+use crate::grok::Live as GrokLive;
 use crate::hermes::Hermes;
 
 const KEEP_RECORDS: usize = 50;
@@ -26,6 +27,41 @@ const FRAME_INTERVAL: Duration = Duration::from_millis(60);
 const HERMES_TIMEOUT: Duration = Duration::from_secs(180);
 const STILL_CONNECTED: &str = "(The call is still connected: the owner spoke after your goodbye. \
     Answer them, and call end_call again once they are done.)";
+
+enum Voice {
+    Gemini(GeminiLive),
+    Grok(GrokLive),
+}
+
+impl Voice {
+    fn send_audio(&self, pcm: &[i16]) {
+        match self {
+            Voice::Gemini(live) => live.send_audio(pcm),
+            Voice::Grok(live) => live.send_audio(pcm),
+        }
+    }
+
+    fn send_text(&self, text: &str) {
+        match self {
+            Voice::Gemini(live) => live.send_text(text),
+            Voice::Grok(live) => live.send_text(text),
+        }
+    }
+
+    fn send_tool_response(&self, id: &str, name: &str, response: Value, scheduling: &str) {
+        match self {
+            Voice::Gemini(live) => live.send_tool_response(id, name, response, scheduling),
+            Voice::Grok(live) => live.send_tool_response(id, name, response, scheduling),
+        }
+    }
+
+    fn events_mut(&mut self) -> &mut mpsc::UnboundedReceiver<LiveEvent> {
+        match self {
+            Voice::Gemini(live) => &mut live.events,
+            Voice::Grok(live) => &mut live.events,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -551,6 +587,20 @@ impl Bridge {
         }
     }
 
+    async fn connect_voice(&self, context: &str) -> Result<(Voice, &'static str)> {
+        let setup = self.setup(context);
+        if self.cfg.voice_provider == "grok" {
+            match GrokLive::connect(&self.cfg, setup.clone()).await {
+                Ok(live) => return Ok((Voice::Grok(live), "grok")),
+                Err(e) => {
+                    log::error!("provider=grok connect failed, falling back to gemini: {e:#}");
+                }
+            }
+        }
+        let live = GeminiLive::connect(&self.cfg.gemini_api_key, setup).await?;
+        Ok((Voice::Gemini(live), "gemini"))
+    }
+
     fn spawn_ask_hermes(
         &self,
         id: &str,
@@ -594,8 +644,8 @@ impl Bridge {
             r.status = Status::InProgress;
             r.answered_at = Some(now());
         });
-        let mut live = match Live::connect(&self.cfg.gemini_api_key, self.setup(context)).await {
-            Ok(l) => l,
+        let (mut live, provider) = match self.connect_voice(context).await {
+            Ok(connected) => connected,
             Err(e) => {
                 log::error!("call {id}: voice model unavailable: {e:#}");
                 terminate(&handle).await;
@@ -606,6 +656,7 @@ impl Bridge {
                 );
             }
         };
+        log::info!("call {id}: provider={provider}");
         live.send_text(opening);
 
         // Model speech goes out on a fixed 60 ms clock; the library does not pace for us.
@@ -657,7 +708,7 @@ impl Bridge {
                         break why.to_string();
                     }
                 }
-                ev = live.events.recv() => match ev {
+                ev = live.events_mut().recv() => match ev {
                     Some(LiveEvent::Audio(pcm)) => playout.push(&down.process(&pcm)),
                     Some(LiveEvent::Interrupted) => {
                         playout.clear();
@@ -698,6 +749,20 @@ impl Bridge {
                         }
                     }
                     Some(LiveEvent::Closed(why)) => break format!("voice model disconnected: {why}"),
+                    Some(LiveEvent::Fallback(why)) => {
+                        log::error!("call {id}: provider=grok falling back to gemini: {why}");
+                        match GeminiLive::connect(&self.cfg.gemini_api_key, self.setup(context)).await {
+                            Ok(next) => {
+                                live = Voice::Gemini(next);
+                                live.send_text("(The call is still connected. Continue from where you left off. Speak English only.)");
+                                log::info!("call {id}: provider=gemini fallback=grok");
+                            }
+                            Err(_) => {
+                                log::error!("call {id}: gemini fallback failed");
+                                break format!("voice model disconnected: {why}");
+                            }
+                        }
+                    }
                     None => break "voice model stopped".to_string(),
                 },
             }

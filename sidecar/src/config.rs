@@ -31,6 +31,12 @@ pub struct Config {
     pub silence_timeout: Duration,
     pub answer_inbound: bool,
     pub send_summary: bool,
+    /// "grok" or "gemini". Grok uses the xai-oauth login, never an API key.
+    pub voice_provider: String,
+    pub grok_model: String,
+    pub grok_voice: String,
+    /// Host home that holds auth.json. Read-only.
+    pub hermes_home: PathBuf,
 }
 
 fn var(name: &str, default: &str) -> String {
@@ -66,6 +72,14 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
         _ => bail!("bad duration unit in {s:?}"),
     };
     Ok(Duration::from_secs(secs))
+}
+
+fn voice_provider() -> Result<String> {
+    let value = var("HWV_VOICE_PROVIDER", "gemini").to_ascii_lowercase();
+    if value != "grok" && value != "gemini" {
+        bail!("HWV_VOICE_PROVIDER must be grok or gemini");
+    }
+    Ok(value)
 }
 
 fn live_config(raw: &str) -> Result<serde_json::Value> {
@@ -124,6 +138,10 @@ impl Config {
             silence_timeout: parse_duration(&var("HWV_SILENCE_TIMEOUT", "180s"))?,
             answer_inbound: var("HWV_ANSWER_INBOUND", "true") == "true",
             send_summary: var("HWV_SEND_SUMMARY", "true") == "true",
+            voice_provider: voice_provider()?,
+            grok_model: var("HWV_GROK_MODEL", "grok-voice-latest"),
+            grok_voice: var("HWV_GROK_VOICE", "ara"),
+            hermes_home: PathBuf::from(var("HERMES_HOME", "/opt/data")),
         })
     }
 

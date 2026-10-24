@@ -89,6 +89,7 @@ impl Hermes {
             .as_str()
             .context("no run_id in response")?
             .to_string();
+        log::info!("delegated run_id={run_id}");
         let mut guard = StopOnDrop {
             hermes: self.clone(),
             run_id: run_id.clone(),
