@@ -242,6 +242,36 @@ impl RingSignals {
 /// language). The model ends the call itself, after the owner's goodbye; the sidecar hangs up once
 /// that goodbye has finished playing and a short quiet window passes. Any owner speech in the window
 /// calls the hangup off. A long silence ends a call nobody closed (or left on hold too long).
+/// Keeps the model talking while it works: after a few tool calls in silence it must speak to the
+/// owner before running more, and it must report what its tools did before hanging up.
+#[derive(Default)]
+struct Pacing {
+    silent_tools: u32,
+    owes_report: bool,
+}
+
+impl Pacing {
+    const MAX_SILENT_TOOLS: u32 = 5;
+
+    fn spoke(&mut self) {
+        self.silent_tools = 0;
+        self.owes_report = false;
+    }
+
+    /// False when the model must talk to the owner before another tool runs.
+    fn allow_tool(&mut self) -> bool {
+        if self.silent_tools >= Self::MAX_SILENT_TOOLS {
+            return false;
+        }
+        self.silent_tools += 1;
+        true
+    }
+
+    fn result_sent(&mut self) {
+        self.owes_report = true;
+    }
+}
+
 struct Ending {
     silence: Duration,
     requested: bool,
@@ -749,6 +779,7 @@ impl Bridge {
         let (tool_tx, mut tool_rx) = mpsc::unbounded_channel::<ToolDone>();
         let mut tool_tasks: HashMap<String, JoinHandle<()>> = HashMap::new();
         let mut ending = Ending::new(self.cfg.silence_timeout);
+        let mut pacing = Pacing::default();
         // Texts the owner sends during a core-session call come here instead of the text agent.
         let (text_tx, mut text_rx) = mpsc::unbounded_channel::<String>();
         if core.is_some() {
@@ -776,6 +807,7 @@ impl Bridge {
                 },
                 Some((tool_id, name, result)) = tool_rx.recv() => {
                     tool_tasks.remove(&tool_id);
+                    pacing.result_sent();
                     emit(json!({"type": "tool_result", "id": tool_id, "name": name, "result": result_text(&result)}));
                     live.send_tool_response(&tool_id, &name, result, "WHEN_IDLE");
                 }
@@ -810,6 +842,7 @@ impl Bridge {
                         self.calls.update(id, |r| r.append("owner", &t));
                     }
                     Some(LiveEvent::OutputTranscript(t)) => {
+                        pacing.spoke();
                         emit(json!({"type": "assistant", "text": t}));
                         self.calls.update(id, |r| r.append("assistant", &t));
                     }
@@ -825,12 +858,20 @@ impl Bridge {
                             if self.calls.get(id).is_some_and(|r| r.ends_with_question()) {
                                 live.send_tool_response(&tool_id, &name, json!({"error":
                                     "You just asked the owner a question. Wait for their answer, and end the call only after they say bye."}), "SILENT");
+                            } else if pacing.owes_report {
+                                live.send_tool_response(&tool_id, &name, json!({"error":
+                                    "Tell the owner what came of your last tools first (done, failed, or still open), then end the call only once they are done."}), "SILENT");
                             } else {
                                 live.send_tool_response(&tool_id, &name, json!({"ok": true}), "SILENT");
                                 ending.request();
                             }
                         }
                         _ => match &core {
+                            Some(_) if !pacing.allow_tool() => {
+                                log::info!("call {id}: tool {name} held back until the model speaks");
+                                live.send_tool_response(&tool_id, &name, json!({"error":
+                                    "You have run several tools without saying anything. Tell the owner briefly what you are doing or what you found, then continue."}), "WHEN_IDLE");
+                            }
                             Some(core) => {
                                 log::info!("call {id}: tool {name} {}", truncate(&args.to_string(), 200));
                                 emit(json!({"type": "tool_call", "id": tool_id, "name": name, "args": args}));
@@ -1164,6 +1205,19 @@ mod tests {
             "\"I have another question\", in any language"
         );
         assert_eq!(e.check(at(20_000), false, false), None, "call stays up");
+    }
+
+    #[test]
+    fn pacing_makes_the_model_speak_between_tools_and_before_hanging_up() {
+        let mut pacing = Pacing::default();
+        for _ in 0..Pacing::MAX_SILENT_TOOLS {
+            assert!(pacing.allow_tool());
+        }
+        assert!(!pacing.allow_tool(), "too many tools in silence");
+        pacing.result_sent();
+        assert!(pacing.owes_report, "results not told to the owner yet");
+        pacing.spoke();
+        assert!(pacing.allow_tool() && !pacing.owes_report);
     }
 
     #[test]

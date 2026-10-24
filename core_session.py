@@ -158,6 +158,10 @@ def call_instructions(*, owner_name: str, reason: str, details: str, direction: 
             "with the owner meanwhile. Never make up results or claim a tool ran when it did not."
         ),
         (
+            "- While you work on something, keep the owner posted every few steps, and always tell them how it "
+            "turned out, including when you could not do it, before the call ends."
+        ),
+        (
             f"- If a tool result says a command needs approval, tell the owner briefly what it would do, ask "
             f"them, and call {APPROVE_TOOL} with their answer."
         ),
