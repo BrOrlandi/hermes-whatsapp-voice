@@ -89,26 +89,31 @@ def test_write_back_keeps_tool_results_next_to_their_calls(cs):
     assert [m["role"] for m in log.pending(final=True)] == ["tool", "user", "assistant"]
 
 
-def test_write_back_closes_tool_calls_left_open_when_the_call_ends(cs):
+def test_write_back_skips_deep_turns_and_closes_unfinished_calls(cs):
     log = cs.EventLog("call2")
     log.add([
-        {"type": "owner", "text": "Search for flights."},
-        {"type": "tool_call", "id": "t2", "name": "web_search", "args": {"query": "flights"}},
+        {"type": "owner", "text": "Plan my week."},
+        {"type": "assistant", "text": "Let me work on that."},
+        {"type": "tool_call", "id": "d1", "name": cs.DEEP_TOOL, "args": {"request": "plan week"}},
+        {"type": "tool_result", "id": "d1", "name": cs.DEEP_TOOL, "result": "done"},
+        {"type": "tool_call", "id": "t2", "name": "web_search", "args": {"query": "x"}},
     ])  # fmt: skip
     final = log.messages(final=True)
-    assert [m["role"] for m in final] == ["user", "assistant", "tool"]
-    assert final[-1]["tool_call_id"] == "t2" and "call ended" in final[-1]["content"]
+    assert all(cs.DEEP_TOOL not in json.dumps(m) for m in final), "the deep turn saves its own messages"
+    assert final[-1]["role"] == "tool" and final[-1]["tool_call_id"] == "t2"
+    assert "call ended" in final[-1]["content"]
 
 
 def test_call_instructions_name_the_session_tools_and_rules(cs):
     text = cs.call_instructions(
-        owner_name="Sam", reason="Server down", details="", direction="outbound",
+        owner_name="Sam", tools=["memory", "terminal"], reason="Server down", details="", direction="outbound",
         voice_instructions="Keep it short.", languages=["en-US", "ta-IN"],
     )  # fmt: skip
-    assert "speaking with Sam" in text and "all of your usual tools" in text
+    assert "speaking with Sam" in text and "memory, terminal" in text and cs.DEEP_TOOL in text
     assert "Never say you are a separate agent" in text and "end_call" in text
     assert "Speak only these languages: en-US, ta-IN" in text and "Keep it short." in text
     assert "You placed this call. Reason: Server down" in text
+    assert cs.voice_tool_names(" memory, ,terminal ") == ["memory", "terminal"]
 
 
 def _text(text, user="15550001111@s.whatsapp.net", chat_type="dm", kind="text", platform="whatsapp"):

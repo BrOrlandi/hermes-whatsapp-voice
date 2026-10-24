@@ -29,6 +29,8 @@ SETTINGS: dict[str, Any] = {
     "assistant_name": "Hermes",
     "languages": "",
     "voice_instructions": "",
+    "voice_tools": "memory, session_search, skills_list, skill_view, web_search, web_extract, read_file, "
+    "search_files, todo_list, hindsight_recall, hindsight_retain, hindsight_reflect",
     "history_chars": 30000,
     "vocabulary": "",
     "live_config": {},

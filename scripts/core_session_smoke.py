@@ -27,6 +27,7 @@ QUESTIONS = [
     "What did we last talk about in our text chat? One sentence.",
     "Which memory system do we use? One sentence.",
     "Use your skills_list tool and tell me how many skills I have, in one sentence.",
+    "Create a Home Assistant automation that turns on the ceiling light at 8:29 tomorrow morning.",
 ]
 
 
@@ -64,7 +65,13 @@ async def ask(ws, session, question: str, stats: dict) -> str:
 
     async def run_tool(fc):
         started = time.monotonic()
-        result = await asyncio.to_thread(session.tool, fc["name"], fc.get("args") or {}, fc["id"])
+        if fc["name"] == session_module.DEEP_TOOL and not WRITE:
+            stats["delegated"] = (fc.get("args") or {}).get("request", "")
+            result = {"result": "Done (smoke test: not actually run)."}
+        elif fc["name"] == session_module.DEEP_TOOL:
+            result = await asyncio.to_thread(session.deep, (fc.get("args") or {}).get("request", ""))
+        else:
+            result = await asyncio.to_thread(session.tool, fc["name"], fc.get("args") or {}, fc["id"])
         stats.setdefault("tool_round_trip_s", []).append(round(time.monotonic() - started, 2))
         await tools_done.put((fc, result))
 
@@ -105,10 +112,12 @@ async def ask(ws, session, question: str, stats: dict) -> str:
 
 
 async def main(plugin_dir: Path) -> int:
+    global session_module
     cs, sc = load_plugin(plugin_dir)
+    session_module = cs
     s = sc.settings(Ctx())
     service = cs.Service(
-        owner=str(s["owner_number"]), token="smoke",
+        owner=str(s["owner_number"]), token="smoke", voice_tools=str(s["voice_tools"]),
         history_chars=int(s["history_chars"]), voice_instructions=str(s["voice_instructions"]),
         languages=[c.strip() for c in str(s["languages"]).split(",") if c.strip()],
         vocabulary=[w.strip() for w in str(s["vocabulary"]).split(",") if w.strip()],
@@ -124,7 +133,11 @@ async def main(plugin_dir: Path) -> int:
           f"{len(ctx['history'])} history turns, tools {[f['name'] for f in ctx['functions']]}")  # fmt: skip
     import websockets
 
-    functions = ctx["functions"] + [{"name": "end_call", "description": "Hang up.", "behavior": "NON_BLOCKING"}]
+    functions = ctx["functions"] + [{"name": "end_call", "description": "Hang up.", "behavior": "NON_BLOCKING"},
+                                    {"name": cs.DEEP_TOOL, "description": "Run a full turn of your normal text self "
+                                     "(main model, all tools) in this conversation, for real jobs.",
+                                     "parameters": {"type": "object", "properties": {"request": {"type": "string"}},
+                                                    "required": ["request"]}, "behavior": "NON_BLOCKING"}]  # fmt: skip
     transcription = {"customVocabulary": ctx["vocabulary"]} if ctx["vocabulary"] else {}
     setup = {
         "model": f"models/{s['voice_model']}",
@@ -161,6 +174,7 @@ async def main(plugin_dir: Path) -> int:
 
 
 WRITE = "--no-write" not in sys.argv
+session_module = None
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING)

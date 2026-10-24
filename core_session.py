@@ -5,6 +5,7 @@ state.db is opened with Hermes's SQLite). The sidecar calls this loopback servic
 
 - start a call: get the session's own system prompt, recent history and tool schemas (/voice/start)
 - run a tool through Hermes's dispatcher, in that session (/voice/tool, /voice/approve)
+- run a full Hermes turn in that session for heavy work (/voice/deep)
 - write the call back into the session's history as it happens (/voice/events, /voice/end)
 
 Everything that touches Hermes internals is in `HermesSession`; the rest is plain data shaping, so
@@ -27,11 +28,13 @@ from typing import Any
 
 log = logging.getLogger("hermes_whatsapp_voice.core_session")
 
+DEEP_TOOL = "ask_hermes_deep"
 APPROVE_TOOL = "approve_command"
 VOICE_KIND = "voice_call"
 USER_PREFIX = "[Voice call] "
 TEXT_PREFIX = "[Texted during the voice call] "
-TOOL_TIMEOUT = 600.0  # long tools (delegate_task, execute_code) run while the call goes on
+TOOL_TIMEOUT = 120.0
+DEEP_TIMEOUT = 600.0
 
 
 # --- pure helpers -------------------------------------------------------------------------------
@@ -126,7 +129,11 @@ def _content_text(content) -> str:
     return str(content or "")
 
 
-def call_instructions(*, owner_name: str, reason: str, details: str, direction: str,
+def voice_tool_names(setting: str) -> list[str]:
+    return [t.strip() for t in (setting or "").split(",") if t.strip()]
+
+
+def call_instructions(*, owner_name: str, tools: list[str], reason: str, details: str, direction: str,
                       voice_instructions: str, languages: list[str]) -> str:  # fmt: skip
     """The part of the system prompt that is specific to a live call; appended to the session's own."""
     owner = owner_name or "the owner"
@@ -151,7 +158,13 @@ def call_instructions(*, owner_name: str, reason: str, details: str, direction: 
             f"- Use {owner}'s name at most once, when you greet them; after that, don't say it. If you hear a "
             "fragment or noise that makes no sense, don't act on it; ask briefly or let it go."
         ),
-        "- You have all of your usual tools on this call, and use them as you would in the text chat.",
+        (
+            f"- On this call you use these tools yourself, for quick answers: {', '.join(tools) or 'none'}. "
+            f"For any real job (running commands, changing or creating something, automations, reminders, "
+            f"messages, anything with more than one or two steps), call {DEEP_TOOL} right away with the full "
+            "request and do not try it yourself: it runs your normal text self, with all of your tools, in "
+            "this same conversation. Tell the owner you are on it, and tell them the outcome when it comes."
+        ),
         (
             "- Before a tool, say a few words first. Only say you will check something if you call a tool in "
             "that same reply. Results arrive a little later and you will be told when they do; keep talking "
@@ -236,7 +249,7 @@ class EventLog:
                     last["content"] = (last.get("content") or "") + text
                 else:
                     out.append(stamp({"role": "assistant", "content": text}))
-            elif kind == "tool_call":
+            elif kind == "tool_call" and ev.get("name") != DEEP_TOOL:
                 last = out[-1] if out else None
                 if not (
                     last
@@ -287,7 +300,7 @@ class EventLog:
 
 
 class Job:
-    """A tool run, which may stop half-way to ask for an approval."""
+    """A tool run or a deep turn, which may stop half-way to ask for an approval."""
 
     def __init__(self):
         self.done: Future = Future()
@@ -370,7 +383,7 @@ class HermesSession:
         return undo
 
     def _on_approval(self, data: dict) -> None:
-        # Called in the thread that hit the approval; nested tools (e.g. delegate_task) use their own threads.
+        # Called in the thread that hit the approval; a deep turn's tools may run on its own threads.
         job = getattr(self.local, "job", None) or (self.running[-1] if self.running else None)
         if job is not None:
             job.approval = {"command": data.get("command", ""), "description": data.get("description", "")}
@@ -424,9 +437,10 @@ class HermesSession:
         if not system_prompt:  # a session that never ran a turn has no stored prompt yet
             system_prompt = self.agent.result(timeout=60)._build_system_prompt(None)
         schemas = self._tool_schemas(row)
+        names = [n for n in voice_tool_names(s.voice_tools) if n in schemas]
         owner_name = self.origin.get("user_name") or self.entry.get("display_name") or ""
         instruction = "\n\n".join(p for p in [system_prompt, self._pin(), call_instructions(
-            owner_name=owner_name, reason=reason, details=details, direction=direction,
+            owner_name=owner_name, tools=names, reason=reason, details=details, direction=direction,
             voice_instructions=s.voice_instructions, languages=s.languages,
         )] if p)  # fmt: skip
         history = history_to_contents(self._history(), s.history_chars)
@@ -434,7 +448,7 @@ class HermesSession:
             "session_id": self.session_id,
             "system_instruction": instruction,
             "history": history,
-            "functions": [function_declaration(t) for t in schemas.values()],
+            "functions": [function_declaration(schemas[n]) for n in names],
             "vocabulary": sorted({w for w in re.split(r"\s+", owner_name) if len(w) > 2} | set(s.vocabulary)),
         }
 
@@ -504,7 +518,32 @@ class HermesSession:
         verdict = {"once": "once", "session": "session", "always": "always"}.get(choice, "deny")
         job.approval = None
         resolve_gateway_approval(self.key, verdict)
-        return self._wait(job, TOOL_TIMEOUT)
+        return self._wait(job, DEEP_TIMEOUT)
+
+    def deep(self, request: str) -> dict:
+        from run_agent import AIAgent
+
+        self.flush()
+
+        def work():
+            with self.lock:
+                self.session_id = self._tip(self.session_id)
+                note = ("This request comes from you on a live WhatsApp voice call with the owner. Do the "
+                        "work with all your tools, then end with a short answer that can be read aloud: "
+                        "no markdown, lists, links or emoji.")  # fmt: skip
+                agent = AIAgent(**self._agent_kwargs("\n\n".join(p for p in [self._pin(), note] if p)))
+                history = self.db.get_messages_as_conversation(self.session_id, repair_alternation=True)
+                result = agent.run_conversation(
+                    user_message=USER_PREFIX + request, conversation_history=history, task_id=self.session_id,
+                    persist_user_display_kind=VOICE_KIND,
+                    persist_user_display_metadata={"source": "whatsapp_voice", "call_id": self.call_id},
+                )  # fmt: skip
+                self.seen_row = self._max_row()  # its rows are ours, not chat news
+            if isinstance(result, dict):
+                return result.get("final_response") or result.get("error") or ""
+            return str(result or "")
+
+        return self._run_job(work, DEEP_TIMEOUT)
 
     # write-back ------------------------------------------------------------------------------
 
@@ -588,11 +627,12 @@ def text_into_call(ctx, event) -> dict | None:
 
 
 class Service:
-    def __init__(self, *, owner: str, token: str, history_chars: int = 30000,
+    def __init__(self, *, owner: str, token: str, voice_tools: str = "", history_chars: int = 30000,
                  voice_instructions: str = "", languages: list[str] | None = None,
                  vocabulary: list[str] | None = None):  # fmt: skip
         self.owner = owner
         self.token = token
+        self.voice_tools = voice_tools
         self.history_chars = history_chars
         self.voice_instructions = voice_instructions
         self.languages = languages or []
@@ -619,6 +659,8 @@ class Service:
             return session.tool(body["name"], body.get("args") or {}, str(body.get("id") or ""))
         if path == "/voice/approve":
             return session.approve(str(body.get("choice") or "deny"))
+        if path == "/voice/deep":
+            return session.deep(str(body.get("request") or ""))
         if path == "/voice/events":
             return session.events(body.get("events") or [])
         if path == "/voice/end":

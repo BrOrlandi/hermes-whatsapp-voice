@@ -88,6 +88,11 @@ config_schema:
     default: true
     label: "Send call summary"
     description: "Message a short WhatsApp summary after each call."
+  voice_tools:
+    type: str
+    default: "memory, session_search, skills_list, skill_view, web_search, web_extract, read_file, search_files, todo_list, hindsight_recall, hindsight_retain, hindsight_reflect"
+    label: "Voice tools"
+    description: "core_session: comma-separated Hermes tools the voice uses itself for quick lookups. Real jobs (commands, changes, multi-step work) go to your main model through ask_hermes_deep."
   history_chars:
     type: int
     default: 30000

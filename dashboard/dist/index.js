@@ -19,10 +19,10 @@
   const GROUPS = [
     { title: "You", keys: ["owner_number"] },
     { title: "Voice", keys: ["voice_model", "voice", "assistant_name", "languages", "vocabulary", "voice_instructions"] },
-    { title: "Chat context", keys: ["context_mode", "history_chars"] },
+    { title: "Chat context", keys: ["context_mode", "history_chars", "voice_tools"] },
     { title: "Calls", keys: ["ring_timeout_seconds", "max_call_minutes", "silence_hangup_seconds", "answer_inbound", "send_summary"] },
   ];
-  const WIDE = ["voice_instructions", "live_config"];
+  const WIDE = ["voice_instructions", "voice_tools", "live_config"];
 
   function Card(props, ...children) {
     return h(
