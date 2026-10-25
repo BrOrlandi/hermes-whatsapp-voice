@@ -401,11 +401,19 @@ async fn run(
 ) {
     let mut in_response = false;
     let mut respond_pending = false;
+    let mut audio_chunks = 0u64;
     let reason = loop {
         tokio::select! {
             out = out_rx.recv() => {
                 let text = match out {
-                    Some(Outgoing::Audio(text) | Outgoing::Control(text)) => text,
+                    Some(Outgoing::Audio(text)) => {
+                        audio_chunks += 1;
+                        if audio_chunks == 1 || audio_chunks % 500 == 0 {
+                            log::debug!("provider=openai caller_audio_chunks={audio_chunks}");
+                        }
+                        text
+                    }
+                    Some(Outgoing::Control(text)) => text,
                     Some(Outgoing::Respond) if in_response => {
                         respond_pending = true;
                         continue;
@@ -431,6 +439,11 @@ async fn run(
                     Some(Err(e)) => break format!("socket error: {e}"),
                     None => break "socket ended".to_string(),
                 };
+                if let Some(kind) = value["type"].as_str()
+                    && !kind.ends_with(".delta")
+                {
+                    log::debug!("provider=openai event={kind}");
+                }
                 let parsed = parse_event(&value);
                 if parsed.response_started {
                     in_response = true;
