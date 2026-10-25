@@ -108,6 +108,8 @@ def test_sidecar_env(plugin):
     assert env["HWV_VOICE_PROVIDER"] == "grok"
     assert env["HWV_GROK_MODEL"] == "grok-voice-latest"
     assert env["HWV_GROK_VOICE"] == "ara"
+    assert env["HWV_OPENAI_MODEL"] == "gpt-realtime-2.1"
+    assert env["HWV_OPENAI_VOICE"] == "cedar"
     assert env["HWV_SILENCE_TIMEOUT"] == "180s"
     assert env["GEMINI_API_KEY"] == "gemini-test"
     assert env["HERMES_API_KEY"] == "hermes-test"

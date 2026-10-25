@@ -11,6 +11,7 @@ mod config;
 mod gemini;
 mod grok;
 mod hermes;
+mod openai;
 mod server;
 
 use std::sync::Arc;
@@ -43,12 +44,13 @@ async fn main() -> Result<()> {
             pair(phone).await
         }
         Some("grok-check") => grok::probe().await,
+        Some("openai-check") => openai::probe().await,
         Some("serve") => serve().await,
         Some("--version") => {
             println!("{}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
-        _ => bail!("usage: hermes-wa-voice pair [--phone <number>] | serve | grok-check"),
+        _ => bail!("usage: hermes-wa-voice pair [--phone <number>] | serve | grok-check | openai-check"),
     }
 }
 

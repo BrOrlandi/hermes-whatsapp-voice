@@ -355,7 +355,7 @@ fn b64url(data: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
-fn jwt_expired(token: &str, now: i64) -> bool {
+pub(crate) fn jwt_expired(token: &str, now: i64) -> bool {
     let mut parts = token.split('.');
     let Some(_header) = parts.next() else {
         return true;
@@ -406,14 +406,14 @@ pub fn read_oauth_access_token(home: &Path, now: i64) -> Result<String> {
     Ok(token)
 }
 
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
 }
 
-fn redact(msg: impl AsRef<str>, secret: &str) -> String {
+pub(crate) fn redact(msg: impl AsRef<str>, secret: &str) -> String {
     let msg = msg.as_ref();
     if secret.len() < 8 {
         return msg.to_string();
@@ -796,6 +796,8 @@ pub async fn probe() -> Result<()> {
         voice_provider: "grok".into(),
         grok_model: DEFAULT_MODEL.into(),
         grok_voice: DEFAULT_VOICE.into(),
+        openai_model: String::new(),
+        openai_voice: String::new(),
         hermes_home: home,
     };
     let mut live = Live::connect(&cfg, setup).await?;

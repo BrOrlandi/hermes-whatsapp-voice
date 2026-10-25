@@ -16,6 +16,9 @@ Restart the sidecar after a change: the dashboard's **Restart sidecar** button, 
 | `owner_number` | (required) | Your number, international format |
 | `voice_model` | `gemini-3.8-live` | Gemini Live model |
 | `voice` | `Kore` | Gemini prebuilt voice |
+| `voice_provider` | `grok` | `grok`, `openai` or `gemini`; grok and openai fall back to Gemini if they cannot connect |
+| `openai_model` | `gpt-realtime-2.1` | OpenAI Realtime model, used when `voice_provider` is `openai` |
+| `openai_voice` | `cedar` | OpenAI voice: `alloy`, `ash`, `ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar` |
 | `assistant_name` | `Hermes` | Fallback name when Hermes gives no persona briefing |
 | `languages` | (empty) | Language codes the voice may speak and listen for, e.g. `en-US, ta-IN`; empty allows any |
 | `voice_instructions` | (empty) | Your own extra rules for the voice: language, tone, call length |
@@ -76,6 +79,11 @@ The plugin never asks for its own keys. It reuses what Hermes already has:
 - **Gemini:** the key of Hermes's Gemini provider, `GOOGLE_API_KEY`, else `GEMINI_API_KEY`, from
   Hermes's `.env` (`~/.hermes/.env` by default). Add one with `hermes model` (choose Gemini). Google login (Cloud Code OAuth)
   doesn't work for the Live API.
+- **OpenAI (`voice_provider: openai`):** the ChatGPT login Hermes already holds
+  (`hermes auth login openai-codex`), else the Codex CLI login (`$CODEX_HOME/auth.json`). It mints a
+  short-lived Realtime client secret per call, so the voice runs on the ChatGPT subscription, not
+  on a metered API key. The login is only read: Hermes refreshes it, the sidecar never does. Check
+  it without ringing anyone: `hermes-wa-voice openai-check`.
 - **Hermes API server:** `API_SERVER_KEY` from Hermes's `.env`. Without it, calls still work but
   the voice can't hand tasks to Hermes, and summaries are raw transcripts.
 

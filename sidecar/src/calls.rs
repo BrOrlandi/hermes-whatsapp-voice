@@ -21,6 +21,7 @@ use crate::config::Config;
 use crate::gemini::{Live as GeminiLive, LiveEvent, Setup};
 use crate::grok::Live as GrokLive;
 use crate::hermes::Hermes;
+use crate::openai::Live as OpenAiLive;
 
 const KEEP_RECORDS: usize = 50;
 const FRAME_INTERVAL: Duration = Duration::from_millis(60);
@@ -31,6 +32,7 @@ const STILL_CONNECTED: &str = "(The call is still connected: the owner spoke aft
 enum Voice {
     Gemini(GeminiLive),
     Grok(GrokLive),
+    OpenAi(OpenAiLive),
 }
 
 impl Voice {
@@ -38,6 +40,7 @@ impl Voice {
         match self {
             Voice::Gemini(live) => live.send_audio(pcm),
             Voice::Grok(live) => live.send_audio(pcm),
+            Voice::OpenAi(live) => live.send_audio(pcm),
         }
     }
 
@@ -45,6 +48,7 @@ impl Voice {
         match self {
             Voice::Gemini(live) => live.send_text(text),
             Voice::Grok(live) => live.send_text(text),
+            Voice::OpenAi(live) => live.send_text(text),
         }
     }
 
@@ -52,6 +56,7 @@ impl Voice {
         match self {
             Voice::Gemini(live) => live.send_tool_response(id, name, response, scheduling),
             Voice::Grok(live) => live.send_tool_response(id, name, response, scheduling),
+            Voice::OpenAi(live) => live.send_tool_response(id, name, response, scheduling),
         }
     }
 
@@ -59,6 +64,7 @@ impl Voice {
         match self {
             Voice::Gemini(live) => &mut live.events,
             Voice::Grok(live) => &mut live.events,
+            Voice::OpenAi(live) => &mut live.events,
         }
     }
 }
@@ -589,6 +595,14 @@ impl Bridge {
 
     async fn connect_voice(&self, context: &str) -> Result<(Voice, &'static str)> {
         let setup = self.setup(context);
+        if self.cfg.voice_provider == "openai" {
+            match OpenAiLive::connect(&self.cfg, setup.clone()).await {
+                Ok(live) => return Ok((Voice::OpenAi(live), "openai")),
+                Err(e) => {
+                    log::error!("provider=openai connect failed, falling back to gemini: {e:#}");
+                }
+            }
+        }
         if self.cfg.voice_provider == "grok" {
             match GrokLive::connect(&self.cfg, setup.clone()).await {
                 Ok(live) => return Ok((Voice::Grok(live), "grok")),
