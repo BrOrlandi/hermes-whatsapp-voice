@@ -7,7 +7,10 @@ There are three places to change settings, and all of them write the same values
 
 Restart the sidecar after a change: the dashboard's **Restart sidecar** button, or
 `systemctl --user restart hermes-whatsapp-voice` (Linux), or
-`launchctl kickstart -k gui/$(id -u)/com.hermes.whatsapp-voice` (macOS).
+`launchctl kickstart -k gui/$(id -u)/com.hermes.whatsapp-voice` (macOS). If something else
+supervises the sidecar (s6, supervisord, a container's init), set `HWV_RESTART_COMMAND` in the
+dashboard's environment to that restart command, e.g. `s6-svc -r /run/service/whatsapp-voice`, and
+the dashboard's restart uses it.
 
 ## Settings
 

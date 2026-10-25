@@ -196,3 +196,25 @@ def test_dashboard_settings_reject_unknown_keys_and_wrong_types(plugin, monkeypa
         [prefix + "answer_inbound", "false"],
         [prefix + "live_config", '{"a": {}}'],
     ]
+
+
+def test_dashboard_restart_uses_the_configured_command(plugin, monkeypatch):
+    import importlib.util
+    import subprocess
+
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    spec = importlib.util.spec_from_file_location(
+        "hwv_dashboard_api", plugin.cli.PLUGIN_DIR / "dashboard" / "plugin_api.py"
+    )
+    api = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(api)
+    monkeypatch.setattr(api.subprocess, "run", fake_run)
+    monkeypatch.setenv("HWV_RESTART_COMMAND", "s6-svc -r /run/service/whatsapp-voice")
+
+    assert api.restart() == {"restarted": True}
+    assert calls == [["s6-svc", "-r", "/run/service/whatsapp-voice"]]

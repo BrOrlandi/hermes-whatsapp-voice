@@ -10,6 +10,7 @@ import importlib.util
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -139,7 +140,12 @@ def save_settings(body: dict):
 @router.post("/restart")
 def restart():
     """Restart the sidecar service so new settings apply."""
-    if platform.system() == "Linux" and shutil.which("systemctl"):
+    custom = os.environ.get("HWV_RESTART_COMMAND", "").strip()
+    if custom:
+        # Hosts that supervise the sidecar some other way (s6, supervisord, a container's
+        # init) name their own restart command, e.g. `s6-svc -r /run/service/whatsapp-voice`.
+        cmd = shlex.split(custom)
+    elif platform.system() == "Linux" and shutil.which("systemctl"):
         cmd = ["systemctl", "--user", "restart", SERVICE]
     elif platform.system() == "Darwin":
         cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.hermes.whatsapp-voice"]
