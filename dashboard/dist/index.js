@@ -18,10 +18,83 @@
   // Settings are grouped here; any key not listed lands in Advanced.
   const GROUPS = [
     { title: "You", keys: ["owner_number"] },
-    { title: "Voice", keys: ["voice_provider", "openai_model", "openai_voice", "grok_model", "grok_voice", "voice_model", "voice", "assistant_name", "languages", "voice_instructions"] },
+    { title: "Voice", keys: ["assistant_name", "languages", "voice_instructions"] },
     { title: "Calls", keys: ["ring_timeout_seconds", "max_call_minutes", "silence_hangup_seconds", "answer_inbound", "send_summary"] },
   ];
   const WIDE = ["voice_instructions", "live_config"];
+
+  // The Voice card leads with two linked dropdowns: the realtime model (which also picks
+  // voice_provider) and that provider's voices. Model IDs stay editable in Advanced.
+  const PROVIDERS = [
+    {
+      id: "openai",
+      name: "OpenAI",
+      note: "ChatGPT subscription",
+      modelKey: "openai_model",
+      voiceKey: "openai_voice",
+      voices: ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse", "marin", "cedar"],
+    },
+    {
+      id: "grok",
+      name: "Grok",
+      note: "SuperGrok login",
+      modelKey: "grok_model",
+      voiceKey: "grok_voice",
+      voices: ["ara", "rex", "sal", "eve", "leo", "carina", "zagan", "helix", "orion", "luna", "iris", "altair", "zenith", "perseus",
+        "helios", "lux", "kepler", "rigel", "cosmo", "celeste", "ursa", "sirius", "lumen", "castor", "naksh", "atlas", "aurora", "liora"],
+    },
+    {
+      id: "gemini",
+      name: "Gemini",
+      note: "API key",
+      modelKey: "voice_model",
+      voiceKey: "voice",
+      voices: ["Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede", "Callirrhoe", "Autonoe", "Enceladus", "Iapetus",
+        "Umbriel", "Algieba", "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux",
+        "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat"],
+    },
+  ];
+  const PICKER_KEYS = ["voice_provider"].concat(PROVIDERS.map((p) => p.voiceKey));
+
+  function Select({ value, options, onChange }) {
+    return h(
+      "select",
+      { className: "hwv-select", value, onChange: (e) => onChange(e.target.value) },
+      ...options.map((o) => h("option", { key: o.value, value: o.value }, o.label)),
+    );
+  }
+
+  function VoicePicker({ form, schema, set }) {
+    const provider = PROVIDERS.find((p) => p.id === form.voice_provider) || PROVIDERS[0];
+    const model = (p) => form[p.modelKey] || (schema[p.modelKey] && schema[p.modelKey].default) || "";
+    const voice = form[provider.voiceKey] || "";
+    // A configured voice outside the known list stays selectable rather than silently changing.
+    const voices = provider.voices.includes(voice) || !voice ? provider.voices : [voice].concat(provider.voices);
+    return [
+      h(
+        "label",
+        { key: "model", className: "hwv-field" },
+        h("span", { className: "hwv-label" }, "Voice model"),
+        h(Select, {
+          value: provider.id,
+          options: PROVIDERS.map((p) => ({ value: p.id, label: `${p.name} · ${model(p)} (${p.note})` })),
+          onChange: (id) => set({ voice_provider: id }),
+        }),
+        h("span", { className: "hwv-help" }, "The realtime model that speaks on calls. OpenAI and Grok fall back to Gemini if they cannot connect."),
+      ),
+      h(
+        "label",
+        { key: "voice", className: "hwv-field" },
+        h("span", { className: "hwv-label" }, "Voice"),
+        h(Select, {
+          value: voice || provider.voices[0],
+          options: voices.map((v) => ({ value: v, label: v })),
+          onChange: (v) => set({ [provider.voiceKey]: v }),
+        }),
+        h("span", { className: "hwv-help" }, `${provider.name} voices.`),
+      ),
+    ];
+  }
 
   function Card(props, ...children) {
     return h(
@@ -296,13 +369,14 @@
     };
 
     const field = (key) => h(Field, { key, name: key, spec: schema[key], value: form[key], onChange: (v) => setForm(Object.assign({}, form, { [key]: v })) });
-    const grouped = GROUPS.flatMap((g) => g.keys);
+    const picker = schema.voice_provider ? VoicePicker({ form, schema, set: (patch) => setForm(Object.assign({}, form, patch)) }) : [];
+    const grouped = GROUPS.flatMap((g) => g.keys).concat(schema.voice_provider ? PICKER_KEYS : []);
     const advanced = Object.keys(schema).filter((k) => !grouped.includes(k));
 
     return Card(
       { title: "Settings" },
       ...GROUPS.map((g) =>
-        h("div", { key: g.title, className: "hwv-group" }, h("h3", { className: "hwv-group-title" }, g.title), h("div", { className: "hwv-fields" }, ...g.keys.filter((k) => schema[k]).map(field))),
+        h("div", { key: g.title, className: "hwv-group" }, h("h3", { className: "hwv-group-title" }, g.title), h("div", { className: "hwv-fields" }, ...(g.title === "Voice" ? picker : []), ...g.keys.filter((k) => schema[k]).map(field))),
       ),
       h(
         "details",

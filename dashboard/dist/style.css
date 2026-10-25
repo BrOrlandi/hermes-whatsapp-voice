@@ -57,6 +57,8 @@
 .hwv-toggle { flex-direction: row; align-items: flex-start; justify-content: space-between; gap: 1rem; }
 .hwv-toggle input { width: 1.1rem; height: 1.1rem; margin-top: .15rem; accent-color: var(--color-primary); flex: none; }
 .hwv-textarea { width: 100%; box-sizing: border-box; min-height: 5rem; padding: .5rem .75rem; border: 1px solid var(--color-input, var(--color-border)); background: transparent; color: inherit; font: inherit; font-size: .85rem; resize: vertical; }
+.hwv-select { width: 100%; box-sizing: border-box; height: 2.25rem; padding: 0 .75rem; border: 1px solid var(--color-input, var(--color-border)); background: transparent; color: inherit; font: inherit; font-size: .85rem; }
+.hwv-select option { background: var(--color-card, var(--color-background, #111)); color: var(--color-foreground, inherit); }
 .hwv-textarea.is-code { font-family: var(--font-mono, ui-monospace, monospace); min-height: 9rem; }
 .hwv-advanced summary { cursor: pointer; list-style: none; }
 .hwv-advanced summary::-webkit-details-marker { display: none; }
