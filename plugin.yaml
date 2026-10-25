@@ -36,13 +36,13 @@ config_schema:
   voice_model:
     type: str
     default: "gemini-3.8-live"
-    label: "Voice model"
-    description: "Gemini Live model ID."
+    label: "Gemini model"
+    description: "Gemini Live model ID. Used when voice_provider is gemini, and as the fallback for grok and openai."
   voice:
     type: str
     default: "Kore"
-    label: "Voice"
-    description: "Gemini prebuilt voice, e.g. Kore, Puck, Charon. Ignored when voice_provider is grok."
+    label: "Gemini voice"
+    description: "Gemini prebuilt voice, e.g. Kore, Puck, Charon. Ignored by grok and openai, except on a Gemini fallback."
   voice_provider:
     type: str
     default: "grok"

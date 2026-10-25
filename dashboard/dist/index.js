@@ -18,7 +18,7 @@
   // Settings are grouped here; any key not listed lands in Advanced.
   const GROUPS = [
     { title: "You", keys: ["owner_number"] },
-    { title: "Voice", keys: ["voice_model", "voice", "assistant_name", "languages", "voice_instructions"] },
+    { title: "Voice", keys: ["voice_provider", "openai_model", "openai_voice", "grok_model", "grok_voice", "voice_model", "voice", "assistant_name", "languages", "voice_instructions"] },
     { title: "Calls", keys: ["ring_timeout_seconds", "max_call_minutes", "silence_hangup_seconds", "answer_inbound", "send_summary"] },
   ];
   const WIDE = ["voice_instructions", "live_config"];
